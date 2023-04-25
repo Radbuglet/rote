@@ -1,8 +1,10 @@
 [workspace]
-members = [
-	"src/rote",
-	"src/rote-macro",
-]
+members = ["macros"]
 
-[workspace.dependencies]
-rote-macro = { path = "src/rote-macro" }
+[package]
+name = "rote"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+rote-macros = { path = "macros" }

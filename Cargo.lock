@@ -24,11 +24,11 @@ dependencies = [
 name = "rote"
 version = "0.1.0"
 dependencies = [
- "rote-macro",
+ "rote-macros",
 ]
 
 [[package]]
-name = "rote-macro"
+name = "rote-macros"
 version = "0.1.0"
 dependencies = [
  "proc-macro2",
