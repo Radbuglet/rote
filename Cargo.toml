@@ -1,0 +1,8 @@
+[workspace]
+members = [
+	"src/rote",
+	"src/rote-macro",
+]
+
+[workspace.dependencies]
+rote-macro = { path = "src/rote-macro" }
