@@ -5,6 +5,10 @@ use std::{
     sync::Arc,
 };
 
+// Binds self as `rote` into the extern prelude for this module so `::rote` can always refer to
+// this module.
+extern crate self as rote;
+
 // === Source === //
 
 #[derive(Debug, Clone)]
@@ -171,7 +175,7 @@ pub struct TokenPos {
 
 impl fmt::Debug for TokenPos {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        if self.line == u32::MAX {
+        if self.is_dummy() {
             f.write_str("N/A")
         } else {
             write!(f, "{}:{}", self.line + 1, self.column)
@@ -184,6 +188,10 @@ impl TokenPos {
 
     pub const fn new(line: u32, column: u32) -> Self {
         Self { line, column }
+    }
+
+    pub fn is_dummy(&self) -> bool {
+        self.line == u32::MAX
     }
 }
 

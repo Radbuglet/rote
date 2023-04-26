@@ -1,11 +1,10 @@
 use proc_macro::TokenStream as NativeTokenStream;
-use proc_macro2::{Delimiter, Ident, Span, TokenStream, TokenTree};
+use proc_macro2::{Delimiter, Group, Span, TokenStream, TokenTree};
 use quote::{quote, quote_spanned};
 
 #[proc_macro]
 pub fn rote(input: NativeTokenStream) -> NativeTokenStream {
-    // FIXME: This is not how you get the crate root
-    let crate_ = TokenTree::from(Ident::new("crate", Span::mixed_site())).into();
+    let crate_ = quote!(::rote);
 
     make_group_builder(
         &crate_,
@@ -25,6 +24,7 @@ fn make_group_builder(
     let mut output = output_prelude;
 
     let token_pos_ctor = |span| {
+        let crate_ = re_span(crate_.clone(), span);
         quote_spanned! { span =>
             #crate_::TokenPos::new(#crate_::macro_internals::line!(), #crate_::macro_internals::column!())
         }
@@ -37,7 +37,7 @@ fn make_group_builder(
         let sub_token = match first {
             TokenTree::Group(group) => {
                 let start_getter = token_pos_ctor(group.span_open());
-                let end_getter = token_pos_ctor(group.span_close()); // FIXME: This doesn't seem to work correctly.
+                let end_getter = token_pos_ctor(group.span_close());
                 let delimiter = match group.delimiter() {
                     Delimiter::Parenthesis => quote! { Paren },
                     Delimiter::Brace => quote! { Brace },
@@ -122,4 +122,18 @@ fn make_group_builder(
     output = quote! { #crate_::Source::Tree(#output) };
 
     output
+}
+
+fn re_span(stream: TokenStream, span: Span) -> TokenStream {
+    TokenStream::from_iter(stream.into_iter().map(|token| match token {
+        TokenTree::Group(old_group) => {
+            let mut group = Group::new(old_group.delimiter(), re_span(old_group.stream(), span));
+            group.set_span(span);
+            TokenTree::Group(group)
+        }
+        mut token => {
+            token.set_span(span);
+            token
+        }
+    }))
 }
