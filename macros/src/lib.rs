@@ -92,7 +92,8 @@ fn make_group_builder(
 
                             input.next(); // Consume the directive group
 
-                            break 'a quote! {
+                            let crate_ = re_span(crate_.clone(), directive.span());
+                            break 'a quote_spanned! { directive.span() =>
                                 #crate_::SourceDirective::new(#start_getter, #end_getter, #directive)
                             };
                         }

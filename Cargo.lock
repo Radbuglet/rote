@@ -3,6 +3,12 @@
 version = 3
 
 [[package]]
+name = "bumpalo"
+version = "3.12.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "9b1ce199063694f33ffb7dd4e0ee620741495c32833cde5aa08f02a0bf96f0c8"
+
+[[package]]
 name = "proc-macro2"
 version = "1.0.56"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -24,7 +30,7 @@ dependencies = [
 name = "rote"
 version = "0.1.0"
 dependencies = [
- "rote-macros",
+ "bumpalo",
 ]
 
 [[package]]
