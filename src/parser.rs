@@ -1,4 +1,4 @@
-use std::{error::Error, fmt};
+use std::{error::Error, fmt, iter::Map};
 
 use crate::util::UnsizedVec;
 
@@ -76,18 +76,18 @@ pub trait Cursor: Clone {
 }
 
 // Parser
-pub struct Parser<C> {
-    expectations: UnsizedVec<dyn ToString>,
-    hints: UnsizedVec<dyn UnsizedRejectionHint<C>>,
+pub struct Parser<'h, C> {
+    expectations: UnsizedVec<(dyn ToString + 'h)>,
+    hints: UnsizedVec<dyn UnsizedRejectionHint<C> + 'h>,
     cursor: C,
 }
 
-trait UnsizedRejectionHint<C> {
+pub trait UnsizedRejectionHint<C> {
     fn span(&self) -> Option<SpanCursor<C>>;
     fn text(&self) -> String;
 }
 
-impl<C: fmt::Debug> fmt::Debug for Parser<C> {
+impl<C: fmt::Debug> fmt::Debug for Parser<'_, C> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("Parser")
             .field("expectations", &self.expectations().collect::<Vec<_>>())
@@ -96,7 +96,7 @@ impl<C: fmt::Debug> fmt::Debug for Parser<C> {
     }
 }
 
-impl<C> Parser<C> {
+impl<'m, C> Parser<'m, C> {
     pub fn new(cursor: C) -> Self {
         Self {
             expectations: UnsizedVec::default(),
@@ -125,32 +125,38 @@ impl<C> Parser<C> {
         self.hints.clear();
     }
 
-    pub fn expectations(&self) -> impl Iterator<Item = String> + '_ {
+    pub fn expectations<'a>(
+        &'a self,
+    ) -> Map<
+        impl Iterator<Item = &'a (dyn ToString + 'm)> + 'a,
+        impl FnMut(&(dyn ToString + 'm)) -> String,
+    > {
         self.expectations.iter().map(ToString::to_string)
     }
 
-    pub fn hints(&self) -> impl Iterator<Item = (Option<SpanCursor<C>>, String)> + '_ {
-        self.hints.iter().map(|hint| (hint.span(), hint.text()))
+    pub fn hints<'a>(
+        &'a self,
+    ) -> impl Iterator<Item = &'a (dyn UnsizedRejectionHint<C> + 'm)> + 'a {
+        self.hints.iter()
     }
 
-    pub fn expecting<T: 'static + ToString>(&mut self, expectation: T) -> &mut Self {
+    pub fn expecting<T: 'm + ToString>(&mut self, expectation: T) -> &mut Self {
         self.expectations.push(expectation, |e| e);
         self
     }
 
-    pub fn hinter(&mut self) -> ParserHinter<'_, C> {
+    pub fn hinter<'a>(&'a mut self) -> ParserHinter<'a, 'm, C> {
         ParserHinter(&mut self.hints)
     }
 
-    pub fn hint<T: 'static + ToString>(&mut self, hint: T) -> &mut Self {
+    pub fn hint<T: 'm + ToString>(&mut self, hint: T) -> &mut Self {
         self.hinter().hint(hint);
         self
     }
 
-    pub fn hint_spanned<T: 'static + ToString>(&mut self, span: SpanCursor<C>, hint: T) -> &mut Self
+    pub fn hint_spanned<T: 'm + ToString>(&mut self, span: SpanCursor<C>, hint: T) -> &mut Self
     where
-        // TODO: Make this non-'static by limiting the lifetime of our hints.
-        C: 'static + Cursor,
+        C: 'm + Cursor,
     {
         self.hinter().hint_spanned(span, hint);
         self
@@ -176,7 +182,7 @@ impl<C> Parser<C> {
     pub fn try_match_hinted<F, R>(&mut self, matcher: F) -> R::Unwrapped
     where
         C: Cursor,
-        F: FnOnce(&mut C, &mut ParserHinter<'_, C>) -> R,
+        F: FnOnce(&mut C, &mut ParserHinter<'_, '_, C>) -> R,
         R: MatchResult,
     {
         let mut fork = self.cursor.clone();
@@ -191,10 +197,10 @@ impl<C> Parser<C> {
     }
 }
 
-pub struct ParserHinter<'a, C>(&'a mut UnsizedVec<dyn UnsizedRejectionHint<C>>);
+pub struct ParserHinter<'a, 'm, C>(&'a mut UnsizedVec<dyn UnsizedRejectionHint<C> + 'm>);
 
-impl<'a, C> ParserHinter<'a, C> {
-    pub fn hint<T: 'static + ToString>(&mut self, hint: T) -> &mut Self {
+impl<'a, 'm, C> ParserHinter<'a, 'm, C> {
+    pub fn hint<T: 'm + ToString>(&mut self, hint: T) -> &mut Self {
         struct Elem<T>(T);
 
         impl<C, T: ToString> UnsizedRejectionHint<C> for Elem<T> {
@@ -211,10 +217,9 @@ impl<'a, C> ParserHinter<'a, C> {
         self
     }
 
-    pub fn hint_spanned<T: 'static + ToString>(&mut self, span: SpanCursor<C>, hint: T) -> &mut Self
+    pub fn hint_spanned<T: 'm + ToString>(&mut self, span: SpanCursor<C>, hint: T) -> &mut Self
     where
-        // TODO: Make this non-'static by limiting the lifetime of our hints.
-        C: 'static + Cursor,
+        C: 'm + Cursor,
     {
         struct Elem<C, T>(SpanCursor<C>, T);
 
@@ -403,7 +408,7 @@ impl<C: StreamCursor, T: ToString> UnexpectedFormatter<C> for T {
 }
 
 // Parser Extensions
-impl<C: StreamCursor + Ord> Parser<C> {
+impl<C: StreamCursor + Ord> Parser<'_, C> {
     pub fn span_cursor(&self, other: &C) -> SpanCursor<C> {
         self.cursor.span_until(other)
     }
@@ -422,7 +427,7 @@ impl<C: StreamCursor + Ord> Parser<C> {
         ParseError {
             offending: (span, unexpected),
             expectations: Some(self.expectations().collect()),
-            hints: self.hints().collect(),
+            hints: self.hints().map(|v| (v.span(), v.text())).collect(),
         }
     }
 }

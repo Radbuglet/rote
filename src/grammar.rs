@@ -6,12 +6,12 @@ pub mod token {
     use unicode_xid::UnicodeXID;
 
     use crate::parser::{
-        Cursor, ParseError, Parser, SpanCursor, StreamCursor, UnexpectedFormatter,
+        Cursor, ParseError, Parser, ParserHinter, SpanCursor, StreamCursor, UnexpectedFormatter,
     };
 
     // === StrCursor === //
 
-    pub type StrParser<'a> = Parser<StrCursor<'a>>;
+    pub type StrParser<'a> = Parser<'a, StrCursor<'a>>;
 
     pub type StrParseError<'a> = ParseError<StrCursor<'a>>;
 
@@ -79,7 +79,7 @@ pub mod token {
 
     pub fn parse_char_escape<'a>(
         p: &mut StrParser<'a>,
-        allow_unicode: bool,
+        is_non_byte: bool,
     ) -> StrResult<'a, Option<char>> {
         // Match a `\`
         if !p.expecting("\\").try_match(|c| c.consume() == Some('\\')) {
@@ -87,7 +87,7 @@ pub mod token {
         }
 
         // Match the actual escape
-        if let Some(escaped) = parse_char_escape_no_backslash(p, allow_unicode)? {
+        if let Some(escaped) = parse_char_escape_no_backslash(p, is_non_byte)? {
             Ok(Some(escaped))
         } else {
             Err(p.unexpected(StrUnexpectedFromSpan))
@@ -96,7 +96,7 @@ pub mod token {
 
     pub fn parse_char_escape_no_backslash<'a>(
         p: &mut StrParser<'a>,
-        allow_unicode: bool,
+        is_non_byte: bool,
     ) -> StrResult<'a, Option<char>> {
         // Try to parse a quote escape
         {
@@ -137,7 +137,7 @@ pub mod token {
 
             // Decode hexdigit
             let escaped = u8::from_str_radix(&format!("{a}{b}"), 16).unwrap();
-            if !escaped.is_ascii() {
+            if is_non_byte && !escaped.is_ascii() {
                 return Err(ParseError::new_invalid(
                     char_span,
                     "Invalid ASCII escape. ASCII escapes must be less than 0x7F.",
@@ -148,7 +148,7 @@ pub mod token {
         }
 
         // Try to parse a Unicode escape
-        if allow_unicode {
+        if is_non_byte {
             if p.expecting("u").try_match(|c| c.consume() == Some('u')) {
                 // TODO
                 return Err(ParseError::new_invalid(
@@ -158,7 +158,7 @@ pub mod token {
             }
         } else {
             if p.cursor().peek() == Some('u') {
-                p.hint("Unicode escapes are not allowed in this context.");
+                p.hint("Unicode escapes are not allowed in byte strings.");
             }
         }
 
@@ -211,9 +211,37 @@ pub mod token {
             || c.lookahead(|c| c.consume() == Some('\n'))
     }
 
+    fn consume_char_in_str_parser(
+        c: &mut StrCursor,
+        h: &mut ParserHinter<'_, '_, StrCursor>,
+        is_non_byte: bool,
+    ) -> Option<char> {
+        c.consume()
+            // Deny isolated carriage returns since they could act weirdly. Since we already
+            // match `\r\n` with a higher precedence, matching a lone `\r` here means that
+            // this is indeed invalid.
+            .filter(|ch| {
+                if *ch == '\r' {
+                    h.hint("Isolated carriage returns without a linefeed cannot appear in a string literal. Use `\\r` instead.");
+                    false
+                } else {
+                    true
+                }
+            })
+            // Deny characters
+            .filter(|ch| {
+                if !is_non_byte && !ch.is_ascii() {
+                    h.hint("Unicode characters are not allowed in byte strings.");
+                    false
+                } else {
+                    true
+                }
+            })
+    }
+
     pub fn parse_non_raw_string_quote<'a>(
         p: &mut StrParser<'a>,
-        allow_unicode: bool,
+        is_non_byte: bool,
     ) -> StrResult<'a, String> {
         // Match string delimiter
         if !p.expecting("\"").try_match(|c| c.consume() == Some('"')) {
@@ -227,7 +255,7 @@ pub mod token {
             // Try to match a character escape
             if p.expecting("\\").try_match(|c| c.consume() == Some('\\')) {
                 // Match a regular character escape
-                if let Some(escaped) = parse_char_escape_no_backslash(p, allow_unicode)? {
+                if let Some(escaped) = parse_char_escape_no_backslash(p, is_non_byte)? {
                     text.push(escaped);
                     continue;
                 }
@@ -235,10 +263,11 @@ pub mod token {
                 // Try to match a newline
                 if p.expecting("newline").try_match(consume_line_break) {
                     // Ignore breaks
-                    while p
-                        .expecting("whitespace")
-                        .try_match(|c| c.consume().filter(|c| ['\t', ' '].contains(c)).is_some())
-                    {
+                    while p.expecting("whitespace").try_match(|c| {
+                        c.consume()
+                            .filter(|c| ['\t', ' ', '\r', '\n'].contains(c))
+                            .is_some()
+                    }) {
                         // (fallthrough)
                     }
                     continue;
@@ -254,38 +283,62 @@ pub mod token {
             }
 
             // Try to match a string character
-            if let Some(char) = p.expecting("string character").try_match_hinted(|c, h| {
-                c.consume()
-                    // Deny isolated carriage returns since they could act weirdly. Since we already
-                    // match `\r\n` with a higher precedence, matching a lone `\r` here means that
-                    // this is indeed invalid.
-                    .filter(|ch| {
-                        if *ch == '\r' {
-                            h.hint("Bare carriage returns without a linefeed cannot appear in a string literal. Use `\\r` instead.");
-                            false
-                        } else {
-                            true
-                        }
-                    })
-                    // Deny characters
-                    .filter(|ch| {
-                        if !allow_unicode && !ch.is_ascii() {
-                            h.hint("Unicode characters are not allowed in this context.");
-                            false
-                        } else {
-                            true
-                        }
-                    })
-            }) {
-				text.push(char);
-				continue;
-			}
+            if let Some(char) = p
+                .expecting("string character")
+                .try_match_hinted(|c, h| consume_char_in_str_parser(c, h, is_non_byte))
+            {
+                text.push(char);
+                continue;
+            }
 
             return Err(p.unexpected(StrUnexpectedFromSpan));
         }
 
         Ok(text)
     }
+
+    pub fn parse_raw_string_quote<'a>(
+        p: &mut StrParser<'a>,
+        pounds: u8,
+        is_non_byte: bool,
+    ) -> StrResult<'a, Option<String>> {
+        // Match the `"` delimiter
+        if !p.expecting("\"").try_match(|c| c.consume() == Some('"')) {
+            return Ok(None);
+        }
+
+        // Match until we find a `"` followed by `pounds` "#" characters.
+        let mut text = String::new();
+        loop {
+            // Try to match the string delimiter
+            if p.expecting("string delimiter").try_match(|c| {
+                c.consume() == Some('"') && (0..pounds).all(|_| c.consume() == Some('#'))
+            }) {
+                break;
+            }
+
+            // Try to match a newline
+            if p.expecting("newline").try_match(consume_line_break) {
+                text.push('\n');
+                continue;
+            }
+
+            // Try to match a string character
+            if let Some(char) = p
+                .expecting("string character")
+                .try_match_hinted(|c, h| consume_char_in_str_parser(c, h, is_non_byte))
+            {
+                text.push(char);
+                continue;
+            }
+
+            return Err(p.unexpected(StrUnexpectedFromSpan));
+        }
+
+        Ok(Some(text))
+    }
+
+    // pub fn parse_number<'a>(p: &mut StrParser<'a>) -> StrResult<'a, Option<String>> {}
 
     pub fn parse_suffix<'a>(p: &mut StrParser<'a>) -> String {
         let mut builder = String::new();

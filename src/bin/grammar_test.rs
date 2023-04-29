@@ -14,9 +14,10 @@ fn main() {
 
     let _ = dbg!(parse_non_raw_string_quote(
         &mut StrParser::new(StrCursor::new(
-            r#""Hello, world!\
-		Foo
-		sdjfklas""#,
+            r#""Hello, world! \
+		
+			Foo
+			sdjfklas""#,
         )),
         true
     ));
