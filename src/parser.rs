@@ -78,7 +78,13 @@ pub trait Cursor: Clone {
 // Parser
 pub struct Parser<C> {
     expectations: UnsizedVec<dyn ToString>,
+    hints: UnsizedVec<dyn UnsizedRejectionHint<C>>,
     cursor: C,
+}
+
+trait UnsizedRejectionHint<C> {
+    fn span(&self) -> Option<SpanCursor<C>>;
+    fn text(&self) -> String;
 }
 
 impl<C: fmt::Debug> fmt::Debug for Parser<C> {
@@ -94,6 +100,7 @@ impl<C> Parser<C> {
     pub fn new(cursor: C) -> Self {
         Self {
             expectations: UnsizedVec::default(),
+            hints: UnsizedVec::default(),
             cursor,
         }
     }
@@ -113,8 +120,17 @@ impl<C> Parser<C> {
         self.cursor.clone()
     }
 
-    pub fn clear_expectations(&mut self) {
+    pub fn clear_errors(&mut self) {
         self.expectations.clear();
+        self.hints.clear();
+    }
+
+    pub fn expectations(&self) -> impl Iterator<Item = String> + '_ {
+        self.expectations.iter().map(ToString::to_string)
+    }
+
+    pub fn hints(&self) -> impl Iterator<Item = (Option<SpanCursor<C>>, String)> + '_ {
+        self.hints.iter().map(|hint| (hint.span(), hint.text()))
     }
 
     pub fn expecting<T: 'static + ToString>(&mut self, expectation: T) -> &mut Self {
@@ -122,8 +138,42 @@ impl<C> Parser<C> {
         self
     }
 
-    pub fn expectations(&self) -> impl Iterator<Item = String> + '_ {
-        self.expectations.iter().map(ToString::to_string)
+    pub fn hint<T: 'static + ToString>(&mut self, hint: T) -> &mut Self {
+        struct Elem<T>(T);
+
+        impl<C, T: ToString> UnsizedRejectionHint<C> for Elem<T> {
+            fn span(&self) -> Option<SpanCursor<C>> {
+                None
+            }
+
+            fn text(&self) -> String {
+                self.0.to_string()
+            }
+        }
+
+        self.hints.push(Elem(hint), |v| v);
+        self
+    }
+
+    pub fn hint_spanned<T: 'static + ToString>(&mut self, span: SpanCursor<C>, hint: T) -> &mut Self
+    where
+        // TODO: Make this non-'static by limiting the lifetime of our hints.
+        C: 'static + Cursor,
+    {
+        struct Elem<C, T>(SpanCursor<C>, T);
+
+        impl<C: Cursor, T: ToString> UnsizedRejectionHint<C> for Elem<C, T> {
+            fn span(&self) -> Option<SpanCursor<C>> {
+                Some(self.0.clone())
+            }
+
+            fn text(&self) -> String {
+                self.1.to_string()
+            }
+        }
+
+        self.hints.push(Elem(span, hint), |v| v);
+        self
     }
 
     pub fn try_match<F, R>(&mut self, matcher: F) -> R::Unwrapped
@@ -137,7 +187,7 @@ impl<C> Parser<C> {
 
         if res.did_pass() {
             self.cursor = fork;
-            self.clear_expectations();
+            self.clear_errors();
         }
 
         res.unwrap()
@@ -276,18 +326,17 @@ pub struct ParseError<C> {
 }
 
 impl<C: StreamCursor> ParseError<C> {
-    pub fn new_invalid(span: SpanCursor<C>, unexpected: impl UnexpectedFormatter<C>) -> Self {
-        let unexpected = unexpected.format(&span);
+    pub fn new_invalid(span: SpanCursor<C>, reason: impl UnexpectedFormatter<C>) -> Self {
+        let reason = reason.format(&span);
 
         Self {
-            offending: (span, unexpected),
+            offending: (span, reason),
             expectations: None,
             hints: Vec::new(),
         }
     }
 }
 
-// TODO: Clean up
 impl<C: StreamCursor> fmt::Display for ParseError<C> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match &self.expectations {
@@ -334,7 +383,7 @@ impl<C: StreamCursor + Ord> Parser<C> {
         ParseError {
             offending: (span, unexpected),
             expectations: Some(self.expectations().collect()),
-            hints: Vec::new(),
+            hints: self.hints().collect(),
         }
     }
 }

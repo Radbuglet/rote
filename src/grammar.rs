@@ -1,6 +1,8 @@
 pub mod token {
     use std::{cmp::Ordering, str::Chars};
 
+    use unicode_xid::UnicodeXID;
+
     use crate::parser::{
         Cursor, ParseError, Parser, SpanCursor, StreamCursor, UnexpectedFormatter,
     };
@@ -73,7 +75,10 @@ pub mod token {
 
     // === Literals === //
 
-    pub fn parse_char_escape<'p>(p: &mut StrParser<'p>) -> StrResult<'p, Option<char>> {
+    pub fn parse_char_escape<'p>(
+        p: &mut StrParser<'p>,
+        allow_unicode: bool,
+    ) -> StrResult<'p, Option<char>> {
         // Try to consume a `\`
         if !p.expecting("\\").try_match(|c| c.consume() == Some('\\')) {
             return Ok(None);
@@ -129,13 +134,71 @@ pub mod token {
         }
 
         // Try to parse a Unicode escape
-        if p.expecting("u").try_match(|c| c.consume() == Some('u')) {
-            if !p.expecting("{").try_match(|c| c.consume() == Some('{')) {
-                p.unexpected(StrUnexpectedFromSpan);
+        if allow_unicode {
+            if p.expecting("u").try_match(|c| c.consume() == Some('u')) {
+                // TODO
+                return Err(ParseError::new_invalid(
+                    p.cursor().span_one(),
+                    "Unicode escapes are not yet supported!",
+                ));
+            }
+        } else {
+            if p.cursor().peek() == Some('u') {
+                p.hint("Unicode escapes are not allowed in this context.");
             }
         }
 
         // Yield error if the escape mode was unexpected
         Err(p.unexpected(StrUnexpectedFromSpan))
+    }
+
+    pub fn parse_char_literal<'a>(p: &mut StrParser<'a>) -> StrResult<'a, Option<char>> {
+        // Try to match the opening quote.
+        if !p.expecting("'").try_match(|c| c.consume() == Some('\'')) {
+            return Ok(None);
+        }
+
+        // Match either an escape or a character
+        let char = 'b: {
+            // Try to parse an escape.
+            if let Some(escaped) = parse_char_escape(p, true)? {
+                break 'b escaped;
+            }
+
+            // Try to parse a regular character
+            if let Some(char) = p.expecting("a character").try_match(|c| {
+                c.consume()
+                    .filter(|char| !['\'', '\\', '\n', '\r', '\t'].contains(char))
+            }) {
+                break 'b char;
+            }
+
+            return Err(ParseError::new_invalid(
+                p.cursor().span_one(),
+                format!(
+					"Invalid character in character literal. Character literals cannot contained unescaped {:?}.",
+					p.cursor().peek().unwrap_or('\0'),
+				),
+            ));
+        };
+
+        // Try to match the closing quote
+        if !p.expecting("'").try_match(|c| c.consume() == Some('\'')) {
+            return Err(p.unexpected(StrUnexpectedFromSpan));
+        }
+
+        Ok(Some(char))
+    }
+
+    pub fn parse_suffix<'a>(p: &mut StrParser<'a>) -> String {
+        let mut builder = String::new();
+        while let Some(char) = p
+            .expecting("suffix character")
+            .try_match(|c| c.consume().filter(|c| c.is_xid_continue()))
+        {
+            builder.push(char);
+        }
+
+        builder
     }
 }
