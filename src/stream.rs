@@ -1,4 +1,9 @@
-use std::{borrow::Cow, sync::Arc};
+use std::{
+    any::{Any, TypeId},
+    borrow::Cow,
+    fmt,
+    sync::Arc,
+};
 
 use crate::util::{new_cow_string, CowString, CowVec};
 
@@ -12,6 +17,7 @@ pub enum Token {
     Literal(TokenLiteral),
     Comment(TokenComment),
     Spacing(TokenSpacing),
+    Directive(TokenDirective),
 }
 
 impl From<TokenGroup> for Token {
@@ -209,4 +215,15 @@ pub enum TokenCommentStyle {
 pub struct TokenSpacing {
     lines: u32,
     columns: u32,
+}
+
+// === Directive === //
+
+#[derive(Debug, Clone)]
+pub struct TokenDirective {
+    data: Arc<dyn Directive>,
+}
+
+pub trait Directive: 'static + fmt::Debug + Send + Sync {
+    fn meta(&self, id: TypeId) -> Option<&(dyn Any + Send + Sync)>;
 }
