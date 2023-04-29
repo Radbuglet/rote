@@ -1,4 +1,4 @@
 pub mod grammar;
 pub mod parser;
-pub mod stream;
+pub mod token;
 mod util;

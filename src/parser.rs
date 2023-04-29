@@ -1,4 +1,4 @@
-use std::fmt;
+use std::{error::Error, fmt};
 
 use crate::util::UnsizedVec;
 
@@ -179,22 +179,47 @@ pub trait StreamCursor: Cursor {
     {
         SpanCursor::new(self.clone(), other.clone())
     }
+
+    fn into_iter(self) -> StreamCursorIter<Self> {
+        StreamCursorIter(self)
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct StreamCursorIter<C>(pub C);
+
+impl<C: StreamCursor> Iterator for StreamCursorIter<C> {
+    type Item = <C::Atom as StreamAtom>::NonEof;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        self.0.consume().non_eof()
+    }
 }
 
 // StreamAtom
 pub trait StreamAtom: Clone {
+    type NonEof;
+
     fn eof() -> Self;
 
     fn is_eof(&self) -> bool;
+
+    fn non_eof(self) -> Option<Self::NonEof>;
 }
 
 impl<T: Clone> StreamAtom for Option<T> {
+    type NonEof = T;
+
     fn eof() -> Self {
         None
     }
 
     fn is_eof(&self) -> bool {
         self.is_none()
+    }
+
+    fn non_eof(self) -> Option<Self::NonEof> {
+        self
     }
 }
 
@@ -246,17 +271,60 @@ impl<C: StreamCursor + Ord> StreamCursor for SpanCursor<C> {
 #[non_exhaustive]
 pub struct ParseError<C> {
     pub offending: (SpanCursor<C>, String),
-    pub expectations: Vec<String>,
+    pub expectations: Option<Vec<String>>,
     pub hints: Vec<(Option<SpanCursor<C>>, String)>,
+}
+
+impl<C: StreamCursor> ParseError<C> {
+    pub fn new_invalid(span: SpanCursor<C>, unexpected: impl UnexpectedFormatter<C>) -> Self {
+        let unexpected = unexpected.format(&span);
+
+        Self {
+            offending: (span, unexpected),
+            expectations: None,
+            hints: Vec::new(),
+        }
+    }
+}
+
+// TODO: Clean up
+impl<C: StreamCursor> fmt::Display for ParseError<C> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match &self.expectations {
+            Some(expectations) => write!(
+                f,
+                "Unexpected {}. Expected one of {:?}.",
+                self.offending.1, expectations,
+            ),
+            None => f.write_str(&self.offending.1),
+        }
+    }
+}
+
+impl<C: fmt::Debug + StreamCursor> Error for ParseError<C> {}
+
+// UnexpectedFormatter
+pub trait UnexpectedFormatter<C: StreamCursor> {
+    fn format(self, span: &SpanCursor<C>) -> String;
+}
+
+impl<C: StreamCursor, T: ToString> UnexpectedFormatter<C> for T {
+    fn format(self, _span: &SpanCursor<C>) -> String {
+        self.to_string()
+    }
 }
 
 // Parser Extensions
 impl<C: StreamCursor + Ord> Parser<C> {
-    pub fn error(&self, unexpected: impl UnexpectedFormatter<C>) -> ParseError<C> {
-        self.error_spanned(self.cursor().span_one(), unexpected)
+    pub fn span_cursor(&self, other: &C) -> SpanCursor<C> {
+        self.cursor.span_until(other)
     }
 
-    pub fn error_spanned(
+    pub fn unexpected(&self, unexpected: impl UnexpectedFormatter<C>) -> ParseError<C> {
+        self.unexpected_spanned(self.cursor().span_one(), unexpected)
+    }
+
+    pub fn unexpected_spanned(
         &self,
         span: SpanCursor<C>,
         unexpected: impl UnexpectedFormatter<C>,
@@ -265,18 +333,8 @@ impl<C: StreamCursor + Ord> Parser<C> {
 
         ParseError {
             offending: (span, unexpected),
-            expectations: self.expectations().collect(),
+            expectations: Some(self.expectations().collect()),
             hints: Vec::new(),
         }
-    }
-}
-
-pub trait UnexpectedFormatter<C: StreamCursor> {
-    fn format(self, span: &SpanCursor<C>) -> String;
-}
-
-impl<C: StreamCursor, T: ToString> UnexpectedFormatter<C> for T {
-    fn format(self, _span: &SpanCursor<C>) -> String {
-        self.to_string()
     }
 }
