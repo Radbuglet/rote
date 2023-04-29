@@ -1,3 +1,5 @@
+// See reference: https://doc.rust-lang.org/reference/tokens.html
+// (Archive link: https://web.archive.org/web/20230415120259/https://doc.rust-lang.org/reference/tokens.html)
 pub mod token {
     use std::{cmp::Ordering, str::Chars};
 
@@ -75,15 +77,27 @@ pub mod token {
 
     // === Literals === //
 
-    pub fn parse_char_escape<'p>(
-        p: &mut StrParser<'p>,
+    pub fn parse_char_escape<'a>(
+        p: &mut StrParser<'a>,
         allow_unicode: bool,
-    ) -> StrResult<'p, Option<char>> {
-        // Try to consume a `\`
+    ) -> StrResult<'a, Option<char>> {
+        // Match a `\`
         if !p.expecting("\\").try_match(|c| c.consume() == Some('\\')) {
             return Ok(None);
         }
 
+        // Match the actual escape
+        if let Some(escaped) = parse_char_escape_no_backslash(p, allow_unicode)? {
+            Ok(Some(escaped))
+        } else {
+            Err(p.unexpected(StrUnexpectedFromSpan))
+        }
+    }
+
+    pub fn parse_char_escape_no_backslash<'a>(
+        p: &mut StrParser<'a>,
+        allow_unicode: bool,
+    ) -> StrResult<'a, Option<char>> {
         // Try to parse a quote escape
         {
             let escapes = [
@@ -148,8 +162,8 @@ pub mod token {
             }
         }
 
-        // Yield error if the escape mode was unexpected
-        Err(p.unexpected(StrUnexpectedFromSpan))
+        // Yield none if the escape mode was unexpected
+        Ok(None)
     }
 
     pub fn parse_char_literal<'a>(p: &mut StrParser<'a>) -> StrResult<'a, Option<char>> {
@@ -190,10 +204,93 @@ pub mod token {
         Ok(Some(char))
     }
 
+    pub fn consume_line_break(c: &mut StrCursor) -> bool {
+        // CRLF
+        c.lookahead(|c| c.consume() == Some('\r') && c.consume() == Some('\n'))
+			// LF
+            || c.lookahead(|c| c.consume() == Some('\n'))
+    }
+
+    pub fn parse_non_raw_string_quote<'a>(
+        p: &mut StrParser<'a>,
+        allow_unicode: bool,
+    ) -> StrResult<'a, String> {
+        // Match string delimiter
+        if !p.expecting("\"").try_match(|c| c.consume() == Some('"')) {
+            return Err(p.unexpected(StrUnexpectedFromSpan));
+        }
+
+        // Match characters
+        let mut text = String::new();
+
+        loop {
+            // Try to match a character escape
+            if p.expecting("\\").try_match(|c| c.consume() == Some('\\')) {
+                // Match a regular character escape
+                if let Some(escaped) = parse_char_escape_no_backslash(p, allow_unicode)? {
+                    text.push(escaped);
+                    continue;
+                }
+
+                // Try to match a newline
+                if p.expecting("newline").try_match(consume_line_break) {
+                    // Ignore breaks
+                    while p
+                        .expecting("whitespace")
+                        .try_match(|c| c.consume().filter(|c| ['\t', ' '].contains(c)).is_some())
+                    {
+                        // (fallthrough)
+                    }
+                    continue;
+                }
+
+                // Failed to match an escaped character
+                return Err(p.unexpected(StrUnexpectedFromSpan));
+            }
+
+            // Try to match a closing delimiter
+            if p.expecting("\"").try_match(|c| c.consume() == Some('"')) {
+                break;
+            }
+
+            // Try to match a string character
+            if let Some(char) = p.expecting("string character").try_match_hinted(|c, h| {
+                c.consume()
+                    // Deny isolated carriage returns since they could act weirdly. Since we already
+                    // match `\r\n` with a higher precedence, matching a lone `\r` here means that
+                    // this is indeed invalid.
+                    .filter(|ch| {
+                        if *ch == '\r' {
+                            h.hint("Bare carriage returns without a linefeed cannot appear in a string literal. Use `\\r` instead.");
+                            false
+                        } else {
+                            true
+                        }
+                    })
+                    // Deny characters
+                    .filter(|ch| {
+                        if !allow_unicode && !ch.is_ascii() {
+                            h.hint("Unicode characters are not allowed in this context.");
+                            false
+                        } else {
+                            true
+                        }
+                    })
+            }) {
+				text.push(char);
+				continue;
+			}
+
+            return Err(p.unexpected(StrUnexpectedFromSpan));
+        }
+
+        Ok(text)
+    }
+
     pub fn parse_suffix<'a>(p: &mut StrParser<'a>) -> String {
         let mut builder = String::new();
         while let Some(char) = p
-            .expecting("suffix character")
+            .expecting("suffix")
             .try_match(|c| c.consume().filter(|c| c.is_xid_continue()))
         {
             builder.push(char);

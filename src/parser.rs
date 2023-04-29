@@ -138,6 +138,62 @@ impl<C> Parser<C> {
         self
     }
 
+    pub fn hinter(&mut self) -> ParserHinter<'_, C> {
+        ParserHinter(&mut self.hints)
+    }
+
+    pub fn hint<T: 'static + ToString>(&mut self, hint: T) -> &mut Self {
+        self.hinter().hint(hint);
+        self
+    }
+
+    pub fn hint_spanned<T: 'static + ToString>(&mut self, span: SpanCursor<C>, hint: T) -> &mut Self
+    where
+        // TODO: Make this non-'static by limiting the lifetime of our hints.
+        C: 'static + Cursor,
+    {
+        self.hinter().hint_spanned(span, hint);
+        self
+    }
+
+    pub fn try_match<F, R>(&mut self, matcher: F) -> R::Unwrapped
+    where
+        C: Cursor,
+        F: FnOnce(&mut C) -> R,
+        R: MatchResult,
+    {
+        let mut fork = self.cursor.clone();
+        let res = matcher(&mut fork);
+
+        if res.did_pass() {
+            self.cursor = fork;
+            self.clear_errors();
+        }
+
+        res.unwrap()
+    }
+
+    pub fn try_match_hinted<F, R>(&mut self, matcher: F) -> R::Unwrapped
+    where
+        C: Cursor,
+        F: FnOnce(&mut C, &mut ParserHinter<'_, C>) -> R,
+        R: MatchResult,
+    {
+        let mut fork = self.cursor.clone();
+        let res = matcher(&mut fork, &mut ParserHinter(&mut self.hints));
+
+        if res.did_pass() {
+            self.cursor = fork;
+            self.clear_errors();
+        }
+
+        res.unwrap()
+    }
+}
+
+pub struct ParserHinter<'a, C>(&'a mut UnsizedVec<dyn UnsizedRejectionHint<C>>);
+
+impl<'a, C> ParserHinter<'a, C> {
     pub fn hint<T: 'static + ToString>(&mut self, hint: T) -> &mut Self {
         struct Elem<T>(T);
 
@@ -151,7 +207,7 @@ impl<C> Parser<C> {
             }
         }
 
-        self.hints.push(Elem(hint), |v| v);
+        self.0.push(Elem(hint), |v| v);
         self
     }
 
@@ -172,25 +228,8 @@ impl<C> Parser<C> {
             }
         }
 
-        self.hints.push(Elem(span, hint), |v| v);
+        self.0.push(Elem(span, hint), |v| v);
         self
-    }
-
-    pub fn try_match<F, R>(&mut self, matcher: F) -> R::Unwrapped
-    where
-        C: Cursor,
-        F: FnOnce(&mut C) -> R,
-        R: MatchResult,
-    {
-        let mut fork = self.cursor.clone();
-        let res = matcher(&mut fork);
-
-        if res.did_pass() {
-            self.cursor = fork;
-            self.clear_errors();
-        }
-
-        res.unwrap()
     }
 }
 
