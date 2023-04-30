@@ -138,8 +138,21 @@ pub struct TokenLiteral {
 }
 
 impl TokenLiteral {
-    pub fn new(decoded: DecodedTokenLiteral) -> Self {
-        todo!()
+    // TODO: Constructors
+
+    pub fn from_decoded(decoded: impl Into<DecodedTokenLiteral>) -> Self {
+        let decoded = decoded.into();
+        let quoted = new_cow_string(match &decoded {
+            DecodedTokenLiteral::Char(char) => format!("{char:?}"),
+            DecodedTokenLiteral::String(string) => format!(
+                "{}{:?}",
+                if string.is_byte() { "b" } else { "" },
+                string.text()
+            ),
+            DecodedTokenLiteral::Number(number) => todo!(),
+        });
+
+        Self { quoted, decoded }
     }
 
     pub fn from_quote(quoted: impl Into<Cow<'static, str>>) -> Self {
@@ -165,40 +178,102 @@ pub enum DecodedTokenLiteral {
     Number(NumericLiteral),
 }
 
+impl From<char> for DecodedTokenLiteral {
+    fn from(value: char) -> Self {
+        Self::Char(value)
+    }
+}
+
+impl From<StringLiteral> for DecodedTokenLiteral {
+    fn from(value: StringLiteral) -> Self {
+        Self::String(value)
+    }
+}
+
+impl From<NumericLiteral> for DecodedTokenLiteral {
+    fn from(value: NumericLiteral) -> Self {
+        Self::Number(value)
+    }
+}
+
 #[derive(Debug, Clone)]
 pub struct StringLiteral {
-    pub raw: bool,
-    pub byte: bool,
-    pub text: CowString,
+    byte: bool,
+    text: CowString,
+}
+
+impl StringLiteral {
+    pub fn new(byte: bool, text: impl Into<Cow<'static, str>>) -> Self {
+        Self {
+            byte,
+            text: new_cow_string(text),
+        }
+    }
+
+    pub fn new_text(text: impl Into<Cow<'static, str>>) -> Self {
+        Self::new(false, text)
+    }
+
+    pub fn new_byte(text: impl Into<Cow<'static, str>>) -> Self {
+        Self::new(true, text)
+    }
+
+    pub fn is_byte(&self) -> bool {
+        self.byte
+    }
+
+    pub fn text(&self) -> &str {
+        &self.text
+    }
 }
 
 #[derive(Debug, Clone)]
 pub struct NumericLiteral {
-    prefix: NumberPrefix,
-    int_part: u128,
-    float_part: Option<NumericLiteralFPart>,
-    suffix: CowString,
+    pub integral: u128,
+    pub fractional: Option<u128>,
+    pub exponent: Option<i128>,
+    pub suffix: Option<NumberSuffix>,
 }
 
-#[derive(Debug, Clone)]
-pub struct NumericLiteralFPart {
-    fractional: Option<u128>,
-    exponent: Option<(FPartSign, u128)>,
+impl NumericLiteral {
+    // TODO: Constructors
 }
 
-#[derive(Debug, Copy, Clone, Eq, PartialEq)]
-pub enum NumberPrefix {
-    Binary = 2,
-    Octal = 8,
-    Decimal = 10,
-    Hexadecimal = 16,
+#[derive(Debug, Copy, Clone, Hash, Eq, PartialEq)]
+pub enum NumberSuffix {
+    U8,
+    I8,
+    U16,
+    I16,
+    U32,
+    I32,
+    U64,
+    I64,
+    U128,
+    I128,
+    F32,
+    F64,
 }
 
-#[derive(Debug, Clone, Eq, PartialEq)]
-pub enum FPartSign {
-    Positive,
-    Negative,
-    ImplicitPositive,
+impl NumberSuffix {
+    const SUFFIXES: [(&'static str, Self); 12] = [
+        ("u8", Self::U8),
+        ("i8", Self::I8),
+        ("u16", Self::U16),
+        ("i16", Self::I16),
+        ("u32", Self::U32),
+        ("i32", Self::I32),
+        ("u64", Self::U64),
+        ("i64", Self::I64),
+        ("u128", Self::U128),
+        ("i128", Self::I128),
+        ("f32", Self::F32),
+        ("f64", Self::F64),
+    ];
+
+    pub fn suffix(&self) -> &'static str {
+        Self::SUFFIXES[*self as usize].0
+    }
 }
 
 // See reference: https://doc.rust-lang.org/reference/tokens.html
@@ -210,10 +285,9 @@ mod literal_parser {
 
     use crate::{
         parser::{
-            Cursor, MatchResult, ParseError, Parser, ParserHinter, SpanCursor, StreamCursor,
-            UnexpectedFormatter,
+            Cursor, ParseError, Parser, ParserHinter, SpanCursor, StreamCursor, UnexpectedFormatter,
         },
-        token::{FPartSign, NumberPrefix, NumericLiteralFPart},
+        token::NumberSuffix,
         util::{lazy_format, new_cow_string, unwrap_display},
     };
 
@@ -549,11 +623,19 @@ mod literal_parser {
     }
 
     fn parse_numeric_literal<'a>(p: &mut StrParser<'a>) -> StrResult<'a, Option<NumericLiteral>> {
+        #[derive(Debug, Copy, Clone, Eq, PartialEq)]
+        enum NumberPrefix {
+            Binary = 2,
+            Octal = 8,
+            Decimal = 10,
+            Hexadecimal = 16,
+        }
+
         fn parse_digits<'a>(
             p: &mut StrParser<'a>,
-            mut accum: u128,
+            mut accum: i128,
             radix: u32,
-        ) -> StrResult<'a, u128> {
+        ) -> StrResult<'a, i128> {
             let section_start = p.fork_cursor();
 
             loop {
@@ -594,7 +676,7 @@ mod literal_parser {
                     };
 
                     // Add the digit to the accumulator.
-                    accum = accum + u128::from(digit);
+                    accum = accum + i128::from(digit);
 
                     continue;
                 }
@@ -655,7 +737,7 @@ mod literal_parser {
         };
 
         // Match the integer part
-        let int_part = parse_digits(
+        let integral = parse_digits(
             p,
             if prefix == NumberPrefix::Decimal {
                 (first_digit as u32 - '0' as u32).into()
@@ -666,7 +748,7 @@ mod literal_parser {
         )?;
 
         // Match the floating part if relevant
-        let float_part = if prefix == NumberPrefix::Decimal {
+        let (fractional, exponent) = if prefix == NumberPrefix::Decimal {
             // Match the fractional part...
             let fractional = 'b: {
                 // Match the `.`
@@ -675,7 +757,7 @@ mod literal_parser {
                 }
 
                 // Match the digits
-                Some(parse_digits(p, 0, NumberPrefix::Decimal as u32)?)
+                Some(parse_digits(p, 0, NumberPrefix::Decimal as u32)? as u128)
             };
 
             // Match the exponential part
@@ -688,24 +770,21 @@ mod literal_parser {
                 // Match an optional sign
                 let sign = 'c: {
                     if p.expecting("+").try_match(|c| c.consume() == Some('+')) {
-                        break 'c FPartSign::Positive;
+                        break 'c 1i128;
                     }
 
                     if p.expecting("-").try_match(|c| c.consume() == Some('-')) {
-                        break 'c FPartSign::Negative;
+                        break 'c -1i128;
                     }
 
-                    FPartSign::ImplicitPositive
+                    1i128
                 };
 
                 // Match the digits
-                Some((sign, parse_digits(p, 0, NumberPrefix::Decimal as u32)?))
+                Some(sign * parse_digits(p, 0, NumberPrefix::Decimal as u32)?)
             };
 
-            Some(NumericLiteralFPart {
-                fractional,
-                exponent,
-            })
+            (fractional, exponent)
         } else {
             // Otherwise, deny decimal points or exponents.
             if p.cursor().peek() == Some('.') || p.cursor().peek() == Some('E') {
@@ -723,31 +802,55 @@ mod literal_parser {
                 ));
             }
 
-            None
+            (None, None)
         };
 
         // Match the numeric suffix
-        let suffix = new_cow_string(parse_suffix(p));
+        let suffix_start = p.fork_cursor();
+        let suffix = if p.expecting("numeric suffix").try_match(|c| {
+            let suffix_len = iter::from_fn(|| {
+                if c.lookahead(|c| c.consume().filter(|c| c.is_xid_continue()).is_some()) {
+                    Some(())
+                } else {
+                    None
+                }
+            })
+            .count();
+
+            suffix_len > 0
+        }) {
+            let suffix_span = suffix_start.span_until(p.cursor());
+
+            match NumberSuffix::SUFFIXES
+                .iter()
+                .find(|(text, _)| suffix_span.clone().into_iter().eq(text.chars()))
+            {
+                Some((_, suffix)) => Some(*suffix),
+                None => {
+                    return Err(ParseError::new_invalid(
+                        suffix_span.clone(),
+                        format!(
+                            "Unknown suffix {:?}. Expected one of: {:?}",
+                            suffix_span.into_iter().collect::<String>(),
+                            NumberSuffix::SUFFIXES
+                                .iter()
+                                .map(|(v, _)| v)
+                                .collect::<Vec<_>>(),
+                        ),
+                    ))
+                }
+            }
+        } else {
+            None
+        };
 
         // Construct a numeric literal
         Ok(Some(NumericLiteral {
-            prefix,
-            int_part,
-            float_part,
+            integral: integral as u128,
+            fractional,
+            exponent,
             suffix,
         }))
-    }
-
-    fn parse_suffix<'a>(p: &mut StrParser<'a>) -> String {
-        let mut builder = String::new();
-        while let Some(char) = p
-            .expecting("suffix")
-            .try_match(|c| c.consume().filter(|c| c.is_xid_continue()))
-        {
-            builder.push(char);
-        }
-
-        builder
     }
 
     // === Driver === //
@@ -799,7 +902,6 @@ mod literal_parser {
                         };
 
                         return Ok(DecodedTokenLiteral::String(StringLiteral {
-                            raw: true,
                             byte: is_byte,
                             text: new_cow_string(text),
                         }));
@@ -807,7 +909,6 @@ mod literal_parser {
                         match (parse_non_raw_string_quote(p, !is_byte)?, is_byte) {
                             (Some(text), is_byte) => {
                                 return Ok(DecodedTokenLiteral::String(StringLiteral {
-                                    raw: false,
                                     byte: is_byte,
                                     text: new_cow_string(text),
                                 }));
@@ -840,8 +941,6 @@ mod literal_parser {
         }
     }
 }
-
-mod literal_builder {}
 
 // === TokenComment === //
 

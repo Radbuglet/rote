@@ -184,6 +184,10 @@ pub fn unwrap_display<T, E: fmt::Display>(value: Result<T, E>) -> T {
 
 // === Formatting === //
 
+pub fn format_closure(f: impl Fn(&mut fmt::Formatter) -> fmt::Result) -> String {
+    format!("{}", FormatterFn(f))
+}
+
 #[derive(Debug, Copy, Clone)]
 pub struct FormatterFn<F>(pub F);
 
