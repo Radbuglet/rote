@@ -5,8 +5,11 @@ pub mod token {
 
     use unicode_xid::UnicodeXID;
 
-    use crate::parser::{
-        Cursor, ParseError, Parser, ParserHinter, SpanCursor, StreamCursor, UnexpectedFormatter,
+    use crate::{
+        parser::{
+            Cursor, ParseError, Parser, ParserHinter, SpanCursor, StreamCursor, UnexpectedFormatter,
+        },
+        util::lazy_format,
     };
 
     // === StrCursor === //
@@ -338,10 +341,77 @@ pub mod token {
         Ok(Some(text))
     }
 
-    pub fn parse_numeric_literal<'a>(p: &mut StrParser<'a>) -> StrResult<'a, Option<String>> {
-        let section_start = p.fork_cursor();
+    pub fn parse_numeric_literal<'a>(
+        p: &mut StrParser<'a>,
+    ) -> StrResult<'a, Option<(u128, Option<(Option<u128>, Option<(bool, u128)>)>, String)>> {
+        fn parse_digits<'a>(
+            p: &mut StrParser<'a>,
+            mut accum: u128,
+            radix: u32,
+        ) -> StrResult<'a, u128> {
+            let section_start = p.fork_cursor();
+
+            loop {
+                // Try to match a digit
+                if let Some(digit) = p.expecting("digit").try_match(|c| {
+                    c.consume()
+                        // Ensure that this is a potential digit for our radix. We always consume all
+                        // decimal digits to avoid weird scenarios where `0b00103` technically has
+                        // the suffix `3`, which is weird.
+                        .filter(|ch| {
+                            if radix == 16 {
+                                ch.is_ascii_hexdigit()
+                            } else {
+                                ch.is_ascii_digit()
+                            }
+                        })
+                        // However, we don't want to match `E` in decimal since that could be used in
+                        // floating-point numbers.
+                        .filter(|_| radix != 10)
+                }) {
+                    // Parse the digit and ensure that the digit is actually valid for this radix.
+                    let digit = match digit.to_digit(radix) {
+                        Some(digit) => digit,
+                        None => {
+                            return Err(ParseError::new_invalid(
+                                section_start.span_until(p.cursor()),
+                                lazy_format!("invalid digit for a base {radix} literal"),
+                            ));
+                        }
+                    };
+
+                    // Shift the accumulator and ensure that the number isn't too big.
+                    accum = match accum.checked_mul(radix.into()) {
+                        Some(accum) => accum,
+                        None => {
+                            return Err(ParseError::new_invalid(
+								section_start.span_until(p.cursor()),
+								"Digit sequence produces a numeric literal too big to be represented in the program.",
+							));
+                        }
+                    };
+
+                    // Add the digit to the accumulator.
+                    accum = accum + u128::from(digit);
+
+                    continue;
+                }
+
+                // Try to match a spacing
+                if p.expecting("_").try_match(|c| c.consume() == Some('_')) {
+                    // (ignores the character entirely)
+                    continue;
+                }
+
+                // Otherwise, break.
+                break;
+            }
+
+            Ok(accum)
+        }
 
         // Try to match a starting digit
+        let section_start = p.fork_cursor();
         let Some(first_digit) = p
             .expecting("digit")
             .try_match(|c| c.consume().filter(|c| c.is_ascii_digit()))
@@ -397,7 +467,7 @@ pub mod token {
                 0
             },
             mode_radix,
-        );
+        )?;
 
         // Match the floating part if relevant
         let float_part = if mode == Mode::Decimal {
@@ -409,7 +479,7 @@ pub mod token {
                 }
 
                 // Match the digits
-                Some(parse_digits(p, 0, Mode::Decimal as u32))
+                Some(parse_digits(p, 0, Mode::Decimal as u32)?)
             };
 
             // Match the exponential part
@@ -433,7 +503,7 @@ pub mod token {
                 };
 
                 // Match the digits
-                Some((is_negative, parse_digits(p, 0, Mode::Decimal as u32)))
+                Some((is_negative, parse_digits(p, 0, Mode::Decimal as u32)?))
             };
 
             Some((fractional_part, exp_part))
@@ -456,55 +526,10 @@ pub mod token {
         };
 
         // Match the numeric suffix
-        // TODO
+        let suffix = parse_suffix(p);
 
         // Construct a numeric literal
-        todo!()
-    }
-
-    pub fn parse_digits<'a>(
-        p: &mut StrParser<'a>,
-        mut accum: u128,
-        radix: u32,
-    ) -> StrResult<'a, u128> {
-        let section_start = p.fork_cursor();
-
-        loop {
-            // Try to match a digit
-            if let Some(digit) = p.expecting("digit").try_match_hinted(|c, h| {
-                let digit = c.consume()?;
-                let Some(digit) = digit.to_digit(radix) else {
-                    if digit.is_ascii_hexdigit() {
-                        // TODO: Hint
-                    }
-                    return None;
-                };
-
-                Some(digit)
-            }) {
-                accum = match accum.checked_mul(radix.into()) {
-                    Some(accum) => accum,
-                    None => {
-                        return Err(ParseError::new_invalid(
-                            section_start.span_until(p.cursor()),
-                            "Digit sequence produces a numeric literal too big to be represented in the program.",
-                        ))
-                    }
-                };
-
-                accum = accum + u128::from(digit);
-            }
-
-            // Try to match a spacing
-            if p.expecting("_").try_match(|c| c.consume() == Some('_')) {
-                continue;
-            }
-
-            // Otherwise, break
-            break;
-        }
-
-        Ok(accum)
+        Ok(Some((int_part, float_part, suffix)))
     }
 
     pub fn parse_suffix<'a>(p: &mut StrParser<'a>) -> String {

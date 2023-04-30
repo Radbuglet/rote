@@ -181,3 +181,29 @@ pub fn unwrap_display<T, E: fmt::Display>(value: Result<T, E>) -> T {
         Err(err) => panic!("{err}"),
     }
 }
+
+// === Formatting === //
+
+#[derive(Debug, Copy, Clone)]
+pub struct FormatterFn<F>(pub F);
+
+impl<F: Fn(&mut fmt::Formatter) -> fmt::Result> fmt::Display for FormatterFn<F> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        (self.0)(f)
+    }
+}
+
+#[doc(hidden)]
+pub mod formatter_fn_internals {
+    pub use std::{fmt::Formatter, write};
+}
+
+macro_rules! lazy_format {
+    ($($tt:tt)*) => {
+        $crate::util::FormatterFn(move |f: &mut $crate::util::formatter_fn_internals::Formatter|
+			$crate::util::formatter_fn_internals::write!(f, $($tt)*)
+		)
+    };
+}
+
+pub(crate) use lazy_format;
