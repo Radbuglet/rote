@@ -422,9 +422,10 @@ pub mod token {
         // Match the numeric type marker.
         #[derive(Copy, Clone, Eq, PartialEq)]
         enum Mode {
+            Binary = 2,
+            Octal = 8,
             Decimal = 10,
             Hexadecimal = 16,
-            Binary = 2,
         }
 
         let mode = 'b: {
@@ -432,29 +433,31 @@ pub mod token {
                 break 'b Mode::Decimal;
             }
 
-            if p.expecting("x").try_match_hinted(|c, h| {
-                let consumed = c.consume();
-                if consumed == Some('X') {
-                    h.hint("The hexadecimal number prefix `0x` should be in lowercase.");
-                }
+            let modes = [
+                ('b', Mode::Binary),
+                ('o', Mode::Octal),
+                ('x', Mode::Hexadecimal),
+            ];
 
-                consumed == Some('x')
-            }) {
-                break 'b Mode::Hexadecimal;
-            }
+            modes
+                .into_iter()
+                .find_map(|(mode_char, mode)| {
+                    if p.expecting(mode_char).try_match_hinted(|c, h| {
+                        let consumed = c.consume();
+                        if consumed == Some(mode_char.to_ascii_uppercase()) {
+                            h.hint(lazy_format!(
+                                "The number prefix `0{mode_char}` should be in lowercase."
+                            ));
+                        }
 
-            if p.expecting("b").try_match_hinted(|c, h| {
-                let consumed = c.consume();
-                if consumed == Some('B') {
-                    h.hint("The binary number prefix `0b` should be in lowercase.");
-                }
-
-                consumed == Some('b')
-            }) {
-                break 'b Mode::Binary;
-            }
-
-            Mode::Decimal
+                        consumed == Some(mode_char)
+                    }) {
+                        Some(mode)
+                    } else {
+                        None
+                    }
+                })
+                .unwrap_or(Mode::Decimal)
         };
         let mode_radix = mode as u32;
 
@@ -512,13 +515,15 @@ pub mod token {
             if p.cursor().peek() == Some('.') || p.cursor().peek() == Some('E') {
                 return Err(ParseError::new_invalid(
                     section_start.span_until(p.cursor()),
-                    match mode {
-                        Mode::Decimal => unreachable!(),
-                        Mode::Hexadecimal => {
-                            "Floating-point hexadecimal numbers are not supported."
+                    lazy_format!(
+                        "Floating-point {} numbers are not supported",
+                        match mode {
+                            Mode::Binary => "binary",
+                            Mode::Octal => "octal",
+                            Mode::Decimal => unreachable!(),
+                            Mode::Hexadecimal => "hexadecimal",
                         }
-                        Mode::Binary => "Floating-point binary numbers are not supported.",
-                    },
+                    ),
                 ));
             }
 
