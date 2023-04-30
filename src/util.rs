@@ -201,8 +201,8 @@ pub mod formatter_fn_internals {
 macro_rules! lazy_format {
     ($($tt:tt)*) => {
         $crate::util::FormatterFn(move |f: &mut $crate::util::formatter_fn_internals::Formatter|
-			$crate::util::formatter_fn_internals::write!(f, $($tt)*)
-		)
+            $crate::util::formatter_fn_internals::write!(f, $($tt)*)
+        )
     };
 }
 

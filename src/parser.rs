@@ -384,11 +384,23 @@ impl<C: StreamCursor> ParseError<C> {
 impl<C: StreamCursor> fmt::Display for ParseError<C> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match &self.expectations {
-            Some(expectations) => write!(
-                f,
-                "Unexpected {}. Expected one of {:?}.",
-                self.offending.1, expectations,
-            ),
+            Some(expectations) => {
+                write!(
+                    f,
+                    "Unexpected {}. Expected one of {:?}.",
+                    self.offending.1, expectations,
+                )?;
+
+                if !self.hints.is_empty() {
+                    write!(
+                        f,
+                        "\nHints: {:?}",
+                        self.hints.iter().map(|(_, hint)| hint).collect::<Vec<_>>()
+                    )?;
+                }
+
+                Ok(())
+            }
             None => f.write_str(&self.offending.1),
         }
     }
