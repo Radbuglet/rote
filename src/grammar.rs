@@ -190,9 +190,9 @@ pub mod token {
             return Err(ParseError::new_invalid(
                 p.cursor().span_one(),
                 format!(
-					"Invalid character in character literal. Character literals cannot contained unescaped {:?}.",
-					p.cursor().peek().unwrap_or('\0'),
-				),
+                    "Invalid character in character literal. Character literals cannot contained unescaped {:?}.",
+                    p.cursor().peek().unwrap_or('\0'),
+                ),
             ));
         };
 
@@ -207,7 +207,7 @@ pub mod token {
     pub fn consume_line_break(c: &mut StrCursor) -> bool {
         // CRLF
         c.lookahead(|c| c.consume() == Some('\r') && c.consume() == Some('\n'))
-			// LF
+            // LF
             || c.lookahead(|c| c.consume() == Some('\n'))
     }
 
@@ -338,7 +338,174 @@ pub mod token {
         Ok(Some(text))
     }
 
-    // pub fn parse_number<'a>(p: &mut StrParser<'a>) -> StrResult<'a, Option<String>> {}
+    pub fn parse_numeric_literal<'a>(p: &mut StrParser<'a>) -> StrResult<'a, Option<String>> {
+        let section_start = p.fork_cursor();
+
+        // Try to match a starting digit
+        let Some(first_digit) = p
+            .expecting("digit")
+            .try_match(|c| c.consume().filter(|c| c.is_ascii_digit()))
+        else {
+            return Ok(None);
+        };
+
+        // Match the numeric type marker.
+        #[derive(Copy, Clone, Eq, PartialEq)]
+        enum Mode {
+            Decimal = 10,
+            Hexadecimal = 16,
+            Binary = 2,
+        }
+
+        let mode = 'b: {
+            if first_digit != '0' {
+                break 'b Mode::Decimal;
+            }
+
+            if p.expecting("x").try_match_hinted(|c, h| {
+                let consumed = c.consume();
+                if consumed == Some('X') {
+                    h.hint("The hexadecimal number prefix `0x` should be in lowercase.");
+                }
+
+                consumed == Some('x')
+            }) {
+                break 'b Mode::Hexadecimal;
+            }
+
+            if p.expecting("b").try_match_hinted(|c, h| {
+                let consumed = c.consume();
+                if consumed == Some('B') {
+                    h.hint("The binary number prefix `0b` should be in lowercase.");
+                }
+
+                consumed == Some('b')
+            }) {
+                break 'b Mode::Binary;
+            }
+
+            Mode::Decimal
+        };
+        let mode_radix = mode as u32;
+
+        // Match the integer part
+        let int_part = parse_digits(
+            p,
+            if mode == Mode::Decimal {
+                first_digit.into()
+            } else {
+                0
+            },
+            mode_radix,
+        );
+
+        // Match the floating part if relevant
+        let float_part = if mode == Mode::Decimal {
+            // Match the fractional part...
+            let fractional_part = 'b: {
+                // Match the `.`
+                if !p.expecting(".").try_match(|c| c.consume() == Some('.')) {
+                    break 'b None;
+                }
+
+                // Match the digits
+                Some(parse_digits(p, 0, Mode::Decimal as u32))
+            };
+
+            // Match the exponential part
+            let exp_part = 'b: {
+                // Match the `E`
+                if !p.expecting("E").try_match(|c| c.consume() == Some('E')) {
+                    break 'b None;
+                }
+
+                // Match an optional sign
+                let is_negative = 'c: {
+                    if p.expecting("+").try_match(|c| c.consume() == Some('+')) {
+                        break 'c false;
+                    }
+
+                    if p.expecting("-").try_match(|c| c.consume() == Some('-')) {
+                        break 'c true;
+                    }
+
+                    false
+                };
+
+                // Match the digits
+                Some((is_negative, parse_digits(p, 0, Mode::Decimal as u32)))
+            };
+
+            Some((fractional_part, exp_part))
+        } else {
+            // Otherwise, deny decimal points or exponents.
+            if p.cursor().peek() == Some('.') || p.cursor().peek() == Some('E') {
+                return Err(ParseError::new_invalid(
+                    section_start.span_until(p.cursor()),
+                    match mode {
+                        Mode::Decimal => unreachable!(),
+                        Mode::Hexadecimal => {
+                            "Floating-point hexadecimal numbers are not supported."
+                        }
+                        Mode::Binary => "Floating-point binary numbers are not supported.",
+                    },
+                ));
+            }
+
+            None
+        };
+
+        // Match the numeric suffix
+        // TODO
+
+        // Construct a numeric literal
+        todo!()
+    }
+
+    pub fn parse_digits<'a>(
+        p: &mut StrParser<'a>,
+        mut accum: u128,
+        radix: u32,
+    ) -> StrResult<'a, u128> {
+        let section_start = p.fork_cursor();
+
+        loop {
+            // Try to match a digit
+            if let Some(digit) = p.expecting("digit").try_match_hinted(|c, h| {
+                let digit = c.consume()?;
+                let Some(digit) = digit.to_digit(radix) else {
+                    if digit.is_ascii_hexdigit() {
+                        // TODO: Hint
+                    }
+                    return None;
+                };
+
+                Some(digit)
+            }) {
+                accum = match accum.checked_mul(radix.into()) {
+                    Some(accum) => accum,
+                    None => {
+                        return Err(ParseError::new_invalid(
+                            section_start.span_until(p.cursor()),
+                            "Digit sequence produces a numeric literal too big to be represented in the program.",
+                        ))
+                    }
+                };
+
+                accum = accum + u128::from(digit);
+            }
+
+            // Try to match a spacing
+            if p.expecting("_").try_match(|c| c.consume() == Some('_')) {
+                continue;
+            }
+
+            // Otherwise, break
+            break;
+        }
+
+        Ok(accum)
+    }
 
     pub fn parse_suffix<'a>(p: &mut StrParser<'a>) -> String {
         let mut builder = String::new();
