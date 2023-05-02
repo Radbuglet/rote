@@ -5,8 +5,6 @@ use std::{
     sync::Arc,
 };
 
-use crate::util::{new_cow_string, CowString, CowVec};
-
 // === Token === //
 
 #[derive(Debug, Clone)]
@@ -66,22 +64,73 @@ pub enum GroupDelimiter {
     Parenthesis,
 }
 
+#[derive(Debug, Copy, Clone, Hash, Eq, PartialEq)]
+pub enum GroupMargin {
+    Absolute(u32),
+    RelativeToMargin(i32),
+    RelativeToCursor(i32),
+}
+
+impl GroupMargin {
+    pub const TAB_SIZE: i32 = 4;
+
+    pub const RESET: Self = Self::Absolute(0);
+    pub const INERT: Self = Self::RelativeToMargin(0);
+    pub const INDENT: Self = Self::RelativeToMargin(Self::TAB_SIZE);
+    pub const UNINDENT: Self = Self::RelativeToMargin(-Self::TAB_SIZE);
+    pub const PRESERVE: Self = Self::RelativeToCursor(0);
+
+    pub const fn indent(count: i32) -> Self {
+        Self::RelativeToMargin(Self::TAB_SIZE * count)
+    }
+
+    pub const fn deindent(count: i32) -> Self {
+        Self::RelativeToMargin(-Self::TAB_SIZE * count)
+    }
+}
+
 #[derive(Debug, Clone)]
 pub struct TokenGroup {
     delimiter: GroupDelimiter,
-    tokens: CowVec<Token>,
+    margin: GroupMargin,
+    tokens: Arc<Vec<Token>>,
 }
 
 impl TokenGroup {
-    pub fn new(delimiter: GroupDelimiter, tokens: impl IntoIterator<Item = Token>) -> Self {
+    pub fn new(
+        delimiter: GroupDelimiter,
+        margin: GroupMargin,
+        tokens: impl IntoIterator<Item = Token>,
+    ) -> Self {
         Self {
             delimiter,
+            margin,
             tokens: Arc::new(Vec::from_iter(tokens)),
         }
     }
 
+    pub fn new_virtual(margin: GroupMargin) -> Self {
+        Self::new(GroupDelimiter::Virtual, margin, [])
+    }
+
+    pub fn new_bracket(margin: GroupMargin) -> Self {
+        Self::new(GroupDelimiter::Bracket, margin, [])
+    }
+
+    pub fn new_brace(margin: GroupMargin) -> Self {
+        Self::new(GroupDelimiter::Brace, margin, [])
+    }
+
+    pub fn new_paren(margin: GroupMargin) -> Self {
+        Self::new(GroupDelimiter::Parenthesis, margin, [])
+    }
+
     pub fn delimiter(&self) -> GroupDelimiter {
         self.delimiter
+    }
+
+    pub fn margin(&self) -> GroupMargin {
+        self.margin
     }
 
     pub fn tokens(&self) -> &[Token] {
@@ -91,19 +140,24 @@ impl TokenGroup {
     pub fn tokens_mut(&mut self) -> &mut Vec<Token> {
         Arc::make_mut(&mut self.tokens)
     }
+
+    pub fn with(mut self, token: impl Into<Token>) -> Self {
+        self.tokens_mut().push(token.into());
+        self
+    }
 }
 
 // === TokenIdent === //
 
 #[derive(Debug, Clone)]
 pub struct TokenIdent {
-    ident: CowString,
+    ident: Cow<'static, str>,
 }
 
 impl TokenIdent {
     pub fn new(ident: impl Into<Cow<'static, str>>) -> Self {
         Self {
-            ident: new_cow_string(ident),
+            ident: ident.into(),
         }
     }
 
@@ -133,30 +187,15 @@ impl TokenPunct {
 
 #[derive(Debug, Clone)]
 pub struct TokenLiteral {
-    quoted: CowString,
+    quoted: Cow<'static, str>,
     decoded: DecodedTokenLiteral,
 }
 
 impl TokenLiteral {
     // TODO: Constructors
 
-    pub fn from_decoded(decoded: impl Into<DecodedTokenLiteral>) -> Self {
-        let decoded = decoded.into();
-        let quoted = new_cow_string(match &decoded {
-            DecodedTokenLiteral::Char(char) => format!("{char:?}"),
-            DecodedTokenLiteral::String(string) => format!(
-                "{}{:?}",
-                if string.is_byte() { "b" } else { "" },
-                string.text()
-            ),
-            DecodedTokenLiteral::Number(number) => todo!(),
-        });
-
-        Self { quoted, decoded }
-    }
-
     pub fn from_quote(quoted: impl Into<Cow<'static, str>>) -> Self {
-        let quoted = new_cow_string(quoted);
+        let quoted = quoted.into();
         let decoded = DecodedTokenLiteral::parse(&quoted);
 
         Self { quoted, decoded }
@@ -199,14 +238,14 @@ impl From<NumericLiteral> for DecodedTokenLiteral {
 #[derive(Debug, Clone)]
 pub struct StringLiteral {
     byte: bool,
-    text: CowString,
+    text: Cow<'static, str>,
 }
 
 impl StringLiteral {
     pub fn new(byte: bool, text: impl Into<Cow<'static, str>>) -> Self {
         Self {
             byte,
-            text: new_cow_string(text),
+            text: text.into(),
         }
     }
 
@@ -288,7 +327,7 @@ mod literal_parser {
             Cursor, ParseError, Parser, ParserHinter, SpanCursor, StreamCursor, UnexpectedFormatter,
         },
         token::NumberSuffix,
-        util::{lazy_format, new_cow_string, unwrap_display},
+        util::{lazy_format, unwrap_display},
     };
 
     use super::{DecodedTokenLiteral, NumericLiteral, StringLiteral};
@@ -903,14 +942,14 @@ mod literal_parser {
 
                         return Ok(DecodedTokenLiteral::String(StringLiteral {
                             byte: is_byte,
-                            text: new_cow_string(text),
+                            text: text.into(),
                         }));
                     } else {
                         match (parse_non_raw_string_quote(p, !is_byte)?, is_byte) {
                             (Some(text), is_byte) => {
                                 return Ok(DecodedTokenLiteral::String(StringLiteral {
                                     byte: is_byte,
-                                    text: new_cow_string(text),
+                                    text: text.into(),
                                 }));
                             }
                             (None, false) => {
@@ -948,7 +987,65 @@ mod literal_parser {
 pub struct TokenComment {
     kind: TokenCommentKind,
     style: TokenCommentStyle,
-    text: CowString,
+    text: Cow<'static, str>,
+}
+
+impl TokenComment {
+    pub fn new(
+        kind: TokenCommentKind,
+        style: TokenCommentStyle,
+        text: impl Into<Cow<'static, str>>,
+    ) -> Self {
+        Self {
+            kind,
+            style,
+            text: text.into(),
+        }
+    }
+
+    pub fn new_line(text: impl Into<Cow<'static, str>>) -> Self {
+        Self::new(TokenCommentKind::Inert, TokenCommentStyle::Line, text)
+    }
+
+    pub fn new_block(text: impl Into<Cow<'static, str>>) -> Self {
+        Self::new(TokenCommentKind::Inert, TokenCommentStyle::Block, text)
+    }
+
+    pub fn new_doc_line(text: impl Into<Cow<'static, str>>) -> Self {
+        Self::new(TokenCommentKind::OuterDoc, TokenCommentStyle::Line, text)
+    }
+
+    pub fn new_doc_block(text: impl Into<Cow<'static, str>>) -> Self {
+        Self::new(TokenCommentKind::OuterDoc, TokenCommentStyle::Block, text)
+    }
+
+    pub fn new_mod_doc_line(text: impl Into<Cow<'static, str>>) -> Self {
+        Self::new(TokenCommentKind::InnerDoc, TokenCommentStyle::Line, text)
+    }
+
+    pub fn new_mod_doc_block(text: impl Into<Cow<'static, str>>) -> Self {
+        Self::new(TokenCommentKind::InnerDoc, TokenCommentStyle::Block, text)
+    }
+
+    pub fn kind(&self) -> TokenCommentKind {
+        self.kind
+    }
+
+    pub fn style(&self) -> TokenCommentStyle {
+        self.style
+    }
+
+    pub fn is_inert(&self) -> bool {
+        self.kind.is_inert()
+    }
+
+    pub fn is_doc(&self) -> bool {
+        self.kind.is_doc()
+    }
+
+    pub fn text(&self) -> &str {
+        &self.text
+    }
 }
 
 #[derive(Debug, Copy, Clone, Hash, Eq, PartialEq)]
@@ -958,27 +1055,163 @@ pub enum TokenCommentKind {
     OuterDoc,
 }
 
-#[derive(Debug, Clone)]
+impl TokenCommentKind {
+    pub fn is_inert(&self) -> bool {
+        *self == Self::Inert
+    }
+
+    pub fn is_doc(&self) -> bool {
+        matches!(self, Self::InnerDoc | Self::OuterDoc)
+    }
+}
+
+#[derive(Debug, Copy, Clone, Hash, Eq, PartialEq)]
 pub enum TokenCommentStyle {
     Line,
     Block,
 }
 
-// === TokenFormatting === //
+// === TokenSpacing === //
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Copy, Clone)]
 pub struct TokenSpacing {
     lines: u32,
-    columns: u32,
+    spaces: u32,
 }
 
-// === Directive === //
+impl TokenSpacing {
+    pub const NEWLINE: Self = Self::new_lines(1);
+    pub const SPACE: Self = Self::new_spaces(1);
 
-#[derive(Debug, Clone)]
+    pub const fn new(lines: u32, spaces: u32) -> Self {
+        Self { lines, spaces }
+    }
+
+    pub const fn new_lines(count: u32) -> Self {
+        Self::new(count, 0)
+    }
+
+    pub const fn new_spaces(count: u32) -> Self {
+        Self::new(0, count)
+    }
+
+    pub fn lines(&self) -> u32 {
+        self.lines
+    }
+
+    pub fn spaces(&self) -> u32 {
+        self.spaces
+    }
+}
+
+// === TokenDirective === //
+#[derive(Debug)]
 pub struct TokenDirective {
-    data: Arc<dyn Directive>,
+    data: Box<dyn ErasedDirective>,
 }
 
-pub trait Directive: 'static + fmt::Debug + Send + Sync {
-    fn meta(&self, id: TypeId) -> Option<&(dyn Any + Send + Sync)>;
+impl TokenDirective {
+    pub fn new<T: Directive>(directive: T) -> Self {
+        Self {
+            data: Box::new(directive),
+        }
+    }
+
+    pub fn data(&self) -> &(dyn Any + Send + Sync) {
+        self.data.as_any()
+    }
+
+    pub fn data_mut(&mut self) -> &mut (dyn Any + Send + Sync) {
+        self.data.as_any_mut()
+    }
+
+    pub fn try_downcast<T: 'static>(&self) -> Option<&T> {
+        self.data().downcast_ref()
+    }
+
+    pub fn downcast<T: 'static>(&self) -> &T {
+        self.try_downcast().unwrap()
+    }
+
+    pub fn try_downcast_mut<T: 'static>(&mut self) -> Option<&mut T> {
+        self.data_mut().downcast_mut()
+    }
+
+    pub fn downcast_mut<T: 'static>(&mut self) -> &mut T {
+        self.try_downcast_mut().unwrap()
+    }
+
+    pub fn try_meta<T: 'static>(&self) -> Option<&T> {
+        let mut demand = Demand {
+            requested: TypeId::of::<T>(),
+            target: None,
+        };
+        self.data.meta(&mut demand);
+        demand.target.map(|v| v.downcast_ref().unwrap())
+    }
+
+    pub fn meta<T: 'static>(&self) -> &T {
+        self.try_meta().unwrap()
+    }
+}
+
+impl Clone for TokenDirective {
+    fn clone(&self) -> Self {
+        Self {
+            data: self.data.clone_boxed(),
+        }
+    }
+}
+
+#[derive(Debug)]
+pub struct Demand<'p> {
+    requested: TypeId,
+    target: Option<&'p dyn Any>,
+}
+
+impl<'p> Demand<'p> {
+    pub fn requested(&self) -> TypeId {
+        self.requested
+    }
+
+    pub fn with<T: 'static>(&mut self, value: &'p T) -> &mut Self {
+        if self.requested == TypeId::of::<T>() {
+            self.target = Some(value);
+        }
+        self
+    }
+}
+
+pub trait Directive: 'static + fmt::Debug + Send + Sync + Clone {
+    fn meta(&self, demand: &mut Demand<'_>) {
+        let _ = demand;
+    }
+}
+
+trait ErasedDirective: 'static + fmt::Debug + Send + Sync {
+    fn as_any(&self) -> &(dyn Any + Send + Sync);
+
+    fn as_any_mut(&mut self) -> &mut (dyn Any + Send + Sync);
+
+    fn meta(&self, demand: &mut Demand<'_>);
+
+    fn clone_boxed(&self) -> Box<dyn ErasedDirective>;
+}
+
+impl<T: Directive> ErasedDirective for T {
+    fn as_any(&self) -> &(dyn Any + Send + Sync) {
+        self
+    }
+
+    fn as_any_mut(&mut self) -> &mut (dyn Any + Send + Sync) {
+        self
+    }
+
+    fn meta(&self, demand: &mut Demand<'_>) {
+        self.meta(demand)
+    }
+
+    fn clone_boxed(&self) -> Box<dyn ErasedDirective> {
+        Box::new(self.clone())
+    }
 }
