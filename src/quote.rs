@@ -1,6 +1,15 @@
 #[doc(hidden)]
 pub mod macro_internals {
-    use crate::token::{GroupDelimiter, GroupMargin, Token, TokenGroup, TokenSpacing};
+    use crate::token::{GroupMargin, Token, TokenGroup, TokenSpacing};
+
+    // === Re-exports === //
+
+    pub use {
+        crate::token::{GroupDelimiter, TokenIdent, TokenLiteral, TokenPunct},
+        std::{column, line},
+    };
+
+    // === GroupBuilder === //
 
     pub struct GroupBuilder {
         group: TokenGroup,
@@ -69,3 +78,5 @@ pub mod macro_internals {
         }
     }
 }
+
+pub use rote_macros::rote;
