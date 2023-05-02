@@ -5,7 +5,7 @@ pub mod macro_internals {
     // === Re-exports === //
 
     pub use {
-        crate::token::{GroupDelimiter, TokenIdent, TokenLiteral, TokenPunct},
+        crate::token::{GroupDelimiter, TokenDirective, TokenIdent, TokenLiteral, TokenPunct},
         std::{column, line},
     };
 

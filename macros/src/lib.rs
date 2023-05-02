@@ -6,16 +6,14 @@ use quote::{quote, quote_spanned};
 pub fn rote(input: NativeTokenStream) -> NativeTokenStream {
     let crate_ = quote!(::rote::quote::macro_internals);
 
-    let mut output = make_group_builder(
+    make_group_builder(
         &crate_,
         input.into(),
         quote! {
             #crate_::GroupBuilder::new(#crate_::GroupDelimiter::Virtual)
         },
-    );
-    output.extend(quote! { .finish() });
-
-    output.into()
+    )
+    .into()
 }
 
 fn make_group_builder(
@@ -33,7 +31,7 @@ fn make_group_builder(
     };
 
     // For every token...
-    let mut input = input.into_iter().peekable();
+    let mut input = input.into_iter();
 
     while let Some(first) = input.next() {
         match first {
@@ -55,7 +53,7 @@ fn make_group_builder(
                     Delimiter::None => quote! { Virtual },
                 };
 
-                let mut sub_group = make_group_builder(
+                let sub_group = make_group_builder(
                     crate_,
                     group.stream(),
                     quote! {
@@ -64,12 +62,6 @@ fn make_group_builder(
                         )
                     },
                 );
-
-                // Pad our subgroup up to the end delimiter and transform into a token
-                sub_group.extend(quote! {
-                    .with_moved_cursor(#end_getter)
-                    .finish()
-                });
 
                 // Add our subgroup to the main group
                 main_group.extend(quote! {
@@ -105,7 +97,7 @@ fn make_group_builder(
                 // identifier gets the span of the start of the lifetime.
                 // FIXME: Is this behavior intentional?
                 if punct.as_char() == '\'' {
-                    if let Some(TokenTree::Ident(ident)) = input.peek() {
+                    if let Some(TokenTree::Ident(ident)) = input.clone().next() {
                         let ident_text = ident.to_string();
                         let end_getter =
                             token_pos_ctor(punct.span(), 0, ident.to_string().len() as u32 + 1);
@@ -124,43 +116,61 @@ fn make_group_builder(
                 }
 
                 // Try to parse this as either a directive or an embedding.
-                // TODO
-                //                 if punct.as_char() == '$' {
-                //                     match input.peek() {
-                //                         // We are an embedding
-                //                         Some(TokenTree::Punct(punct)) if punct.as_char() == '$' => {
-                //                             input.next(); // Consume the second `$`
-                //                             let embedded = input.next(); // Consume the embedded token target, whatever it may be.
-                //
-                //                             // FIXME: This embedding will not be given a proper location.
-                //                             break 'a quote! { #embedded };
-                //                         }
-                //
-                //                         // We are a group-formed directive
-                //                         Some(TokenTree::Group(directive))
-                //                             if matches!(
-                //                                 directive.delimiter(),
-                //                                 Delimiter::Parenthesis | Delimiter::Brace | Delimiter::None,
-                //                             ) =>
-                //                         {
-                //                             let directive = directive.clone();
-                //                             let end_getter = token_pos_ctor(directive.span_close());
-                //
-                //                             input.next(); // Consume the directive group
-                //
-                //                             let crate_ = re_span(crate_.clone(), directive.span());
-                //                             break 'a quote_spanned! { directive.span() =>
-                //                                 #crate_::SourceDirective::new(#start_getter, #end_getter, #directive)
-                //                             };
-                //                         }
-                //
-                //                         // We are a "path + arguments" directives
-                //                         // TODO: Implement
-                //
-                //                         // We are just a regular `$`
-                //                         _ => { /* fallthrough */ }
-                //                     }
-                //                 }
+                if punct.as_char() == '$' {
+                    // Fork our input
+                    let mut input_fork = input.clone();
+
+                    // Attempt to parse this input
+                    match input_fork.next() {
+                        // We are an embedding
+                        Some(TokenTree::Punct(punct)) if punct.as_char() == '$' => {
+                            // Consume the embedded group
+                            if let Some(TokenTree::Group(embedded)) = input_fork.next() {
+                                // Build the main group extension
+                                let end_getter = token_pos_ctor(embedded.span_close(), 0, 0);
+
+                                main_group.extend(quote! {
+                                    .with_moved_cursor(#start_getter)
+                                    .with_token(#embedded)
+                                    .with_warped_cursor(#end_getter)
+                                });
+
+                                // Apply the successful parse fork and break
+                                input = input_fork;
+                                break 'a;
+                            }
+                        }
+
+                        // We are a group-formed directive
+                        Some(TokenTree::Group(directive))
+                            if matches!(
+                                directive.delimiter(),
+                                Delimiter::Parenthesis | Delimiter::Brace | Delimiter::None,
+                            ) =>
+                        {
+                            // Build the main group extension
+                            let end_getter = token_pos_ctor(directive.span_close(), 0, 0);
+                            let crate_ = re_span(crate_.clone(), directive.span());
+                            let directive_inner = directive.stream();
+
+                            main_group.extend(quote_spanned! { directive.span() =>
+                                .with_moved_cursor(#start_getter)
+                                .with_token(#crate_::TokenDirective::new(#directive_inner))
+                                .with_warped_cursor(#end_getter)
+                            });
+
+                            // Apply the successful parse fork and break
+                            input = input_fork;
+                            break 'a;
+                        }
+
+                        // We are a "path + arguments" directives
+                        // TODO: Implement
+
+                        // We are just a regular `$`
+                        _ => { /* fallthrough */ }
+                    }
+                }
 
                 // Otherwise, emit this as just another token
                 let end_getter = token_pos_ctor(punct.span(), 0, 1);
@@ -189,6 +199,9 @@ fn make_group_builder(
             }
         };
     }
+
+    // Transform the builder into a token
+    main_group.extend(quote! { .finish() });
 
     main_group
 }

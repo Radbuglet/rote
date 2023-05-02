@@ -54,6 +54,12 @@ impl From<TokenSpacing> for Token {
     }
 }
 
+impl From<TokenDirective> for Token {
+    fn from(value: TokenDirective) -> Self {
+        Self::Directive(value)
+    }
+}
+
 // === TokenGroup === //
 
 #[derive(Debug, Copy, Clone, Hash, Eq, PartialEq)]
