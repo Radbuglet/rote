@@ -9,3 +9,4 @@ edition = "2021"
 [dependencies]
 bumpalo = "3.12.1"
 unicode-xid = "0.2.4"
+rote-macros = { path = "macros" }

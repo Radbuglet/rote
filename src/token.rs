@@ -67,7 +67,7 @@ pub enum GroupDelimiter {
 #[derive(Debug, Copy, Clone, Hash, Eq, PartialEq)]
 pub enum GroupMargin {
     Absolute(u32),
-    RelativeToMargin(i32),
+    RelativeToLineStart(i32),
     RelativeToCursor(i32),
 }
 
@@ -75,17 +75,17 @@ impl GroupMargin {
     pub const TAB_SIZE: i32 = 4;
 
     pub const RESET: Self = Self::Absolute(0);
-    pub const INERT: Self = Self::RelativeToMargin(0);
-    pub const INDENT: Self = Self::RelativeToMargin(Self::TAB_SIZE);
-    pub const UNINDENT: Self = Self::RelativeToMargin(-Self::TAB_SIZE);
+    pub const INERT: Self = Self::RelativeToLineStart(0);
+    pub const INDENT: Self = Self::RelativeToLineStart(Self::TAB_SIZE);
+    pub const UNINDENT: Self = Self::RelativeToLineStart(-Self::TAB_SIZE);
     pub const PRESERVE: Self = Self::RelativeToCursor(0);
 
     pub const fn indent(count: i32) -> Self {
-        Self::RelativeToMargin(Self::TAB_SIZE * count)
+        Self::RelativeToLineStart(Self::TAB_SIZE * count)
     }
 
     pub const fn deindent(count: i32) -> Self {
-        Self::RelativeToMargin(-Self::TAB_SIZE * count)
+        Self::RelativeToLineStart(-Self::TAB_SIZE * count)
     }
 }
 
@@ -129,8 +129,21 @@ impl TokenGroup {
         self.delimiter
     }
 
+    pub fn set_delimiter(&mut self, delimiter: GroupDelimiter) {
+        self.delimiter = delimiter;
+    }
+
     pub fn margin(&self) -> GroupMargin {
         self.margin
+    }
+
+    pub fn set_margin(&mut self, margin: GroupMargin) {
+        self.margin = margin;
+    }
+
+    pub fn with_margin(mut self, margin: GroupMargin) -> Self {
+        self.set_margin(margin);
+        self
     }
 
     pub fn tokens(&self) -> &[Token] {
@@ -141,8 +154,12 @@ impl TokenGroup {
         Arc::make_mut(&mut self.tokens)
     }
 
-    pub fn with(mut self, token: impl Into<Token>) -> Self {
+    pub fn push_token(&mut self, token: impl Into<Token>) {
         self.tokens_mut().push(token.into());
+    }
+
+    pub fn with(mut self, token: impl Into<Token>) -> Self {
+        self.push_token(token);
         self
     }
 }
@@ -161,8 +178,18 @@ impl TokenIdent {
         }
     }
 
+    // TODO: handle normalization
+
     pub fn ident(&self) -> &str {
         &self.ident
+    }
+
+    pub fn set_ident(&mut self, ident: impl Into<Cow<'static, str>>) {
+        self.ident = ident.into();
+    }
+
+    pub fn ident_mut(&mut self) -> &mut String {
+        self.ident.to_mut()
     }
 }
 
@@ -180,6 +207,10 @@ impl TokenPunct {
 
     pub fn char(&self) -> char {
         self.char
+    }
+
+    pub fn set_char(&mut self, char: char) {
+        self.char = char;
     }
 }
 
@@ -1031,8 +1062,16 @@ impl TokenComment {
         self.kind
     }
 
+    pub fn set_kind(&mut self, kind: TokenCommentKind) {
+        self.kind = kind;
+    }
+
     pub fn style(&self) -> TokenCommentStyle {
         self.style
+    }
+
+    pub fn set_style(&mut self, style: TokenCommentStyle) {
+        self.style = style;
     }
 
     pub fn is_inert(&self) -> bool {
@@ -1045,6 +1084,14 @@ impl TokenComment {
 
     pub fn text(&self) -> &str {
         &self.text
+    }
+
+    pub fn set_text(&mut self, text: impl Into<Cow<'static, str>>) {
+        self.text = text.into();
+    }
+
+    pub fn text_mut(&mut self) -> &mut String {
+        self.text.to_mut()
     }
 }
 
@@ -1099,8 +1146,16 @@ impl TokenSpacing {
         self.lines
     }
 
+    pub fn set_lines(&mut self, count: u32) {
+        self.lines = count;
+    }
+
     pub fn spaces(&self) -> u32 {
         self.spaces
+    }
+
+    pub fn set_spaces(&mut self, count: u32) {
+        self.spaces = count;
     }
 }
 

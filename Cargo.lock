@@ -31,6 +31,7 @@ name = "rote"
 version = "0.1.0"
 dependencies = [
  "bumpalo",
+ "rote-macros",
  "unicode-xid",
 ]
 
