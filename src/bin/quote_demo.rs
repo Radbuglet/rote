@@ -2,17 +2,14 @@ use rote::{quote::rote, token::Directive};
 
 #[rustfmt::skip]
 fn main() {
-    dbg!(rote! {
-		#[derive(Debug, Copy, Clone, Hash, Eq, PartialEq)]
+    println!("{}.", rote! {
 		pub struct Whee<'a> {
-			$${rote! {
-				woo {
-					waz
-				}
-			}}
-			${MyDirective}
+			ceci
+			est un meme
+			"whee? sqfklsj"
+			woo
 		}
-    });
+	});
 }
 
 #[derive(Debug, Clone)]

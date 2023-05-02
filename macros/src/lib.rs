@@ -187,8 +187,8 @@ fn make_group_builder(
                 let start_getter = token_pos_ctor(literal.span(), 0, 0);
                 let end_getter = token_pos_ctor(
                     literal.span(),
-                    source.lines().count() as u32,
-                    source.lines().last().map_or(0, str::len) as u32,
+                    source.lines().count() as u32 - 1,
+                    source.lines().last().unwrap().len() as u32,
                 );
 
                 main_group.extend(quote! {
