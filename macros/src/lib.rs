@@ -104,7 +104,7 @@ fn make_group_builder(
 
                 // Handle lifetime in a special way because the `token_pos_ctor` for the following
                 // identifier gets the span of the start of the lifetime.
-                // FIXME: Is this behavior intentional?
+                // FIXME: Is this behavior intentional in rustc?
                 if punct.as_char() == '\'' {
                     if let Some(TokenTree::Ident(ident)) = input.clone().next() {
                         let ident_text = ident.to_string();

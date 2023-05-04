@@ -20,47 +20,107 @@ pub enum Token {
     Directive(TokenDirective),
 }
 
-impl From<TokenGroup> for Token {
-    fn from(value: TokenGroup) -> Self {
-        Self::Group(value)
-    }
+// Conversions
+macro_rules! impl_token_to_instance_conversions {
+	($({
+		to=$to_converter:ident,
+		as=$as_converter:ident,
+		as_mut=$as_mut_converter:ident,
+		variant=$variant:ident,
+		ty=$ty:ty,
+	},)*) => {
+		$(
+			impl From<$ty> for Token {
+				fn from(value: $ty) -> Self {
+					Self::$variant(value)
+				}
+			}
+
+			impl $ty {
+				pub fn to_token(self) -> Token {
+					self.into()
+				}
+			}
+		)*
+
+		impl Token {
+			$(
+				pub fn $to_converter(self) -> Option<$ty> {
+					match self {
+						Self::$variant(inner) => Some(inner),
+						_ => None,
+					}
+				}
+
+				pub fn $as_converter(&self) -> Option<&$ty> {
+					match self {
+						Self::$variant(inner) => Some(inner),
+						_ => None,
+					}
+				}
+
+				pub fn $as_mut_converter(&mut self) -> Option<&mut $ty> {
+					match self {
+						Self::$variant(inner) => Some(inner),
+						_ => None,
+					}
+				}
+			)*
+		}
+	};
 }
 
-impl From<TokenIdent> for Token {
-    fn from(value: TokenIdent) -> Self {
-        Self::Ident(value)
-    }
-}
-
-impl From<TokenPunct> for Token {
-    fn from(value: TokenPunct) -> Self {
-        Self::Punct(value)
-    }
-}
-
-impl From<TokenLiteral> for Token {
-    fn from(value: TokenLiteral) -> Self {
-        Self::Literal(value)
-    }
-}
-
-impl From<TokenComment> for Token {
-    fn from(value: TokenComment) -> Self {
-        Self::Comment(value)
-    }
-}
-
-impl From<TokenSpacing> for Token {
-    fn from(value: TokenSpacing) -> Self {
-        Self::Spacing(value)
-    }
-}
-
-impl From<TokenDirective> for Token {
-    fn from(value: TokenDirective) -> Self {
-        Self::Directive(value)
-    }
-}
+impl_token_to_instance_conversions!(
+    {
+        to = to_group,
+        as = as_group,
+        as_mut = as_group_mut,
+        variant = Group,
+        ty = TokenGroup,
+    },
+    {
+        to = to_ident,
+        as = as_ident,
+        as_mut = as_ident_mut,
+        variant = Ident,
+        ty = TokenIdent,
+    },
+    {
+        to = to_punct,
+        as = as_punct,
+        as_mut = as_punct_mut,
+        variant = Punct,
+        ty = TokenPunct,
+    },
+    {
+        to = to_literal,
+        as = as_literal,
+        as_mut = as_literal_mut,
+        variant = Literal,
+        ty = TokenLiteral,
+    },
+    {
+        to = to_comment,
+        as = as_comment,
+        as_mut = as_comment_mut,
+        variant = Comment,
+        ty = TokenComment,
+    },
+    {
+        to = to_spacing,
+        as = as_spacing,
+        as_mut = as_spacing_mut,
+        variant = Spacing,
+        ty = TokenSpacing,
+    },
+    {
+        to = to_directive,
+        as = as_directive,
+        as_mut = as_directive_mut,
+        variant = Directive,
+        ty = TokenDirective,
+    },
+);
 
 // === TokenGroup === //
 
@@ -68,6 +128,8 @@ impl From<TokenDirective> for Token {
 pub struct TokenGroup {
     delimiter: GroupDelimiter,
     margin: GroupMargin,
+    head_spacing: u32,
+    head_spacing_visible: bool,
     tokens: Arc<Vec<Token>>,
 }
 
@@ -80,6 +142,8 @@ impl TokenGroup {
         Self {
             delimiter,
             margin,
+            head_spacing: 0,
+            head_spacing_visible: false,
             tokens: Arc::new(Vec::from_iter(tokens)),
         }
     }
@@ -121,25 +185,47 @@ impl TokenGroup {
         self
     }
 
-    pub fn tokens(&self) -> &[Token] {
-        &self.tokens
+    pub fn head_spacing(&self) -> u32 {
+        self.head_spacing
     }
 
-    pub fn tokens_mut(&mut self) -> &mut Vec<Token> {
-        Arc::make_mut(&mut self.tokens)
+    pub fn set_head_spacing(&mut self, spacing: u32) {
+        self.head_spacing = spacing;
     }
 
-    pub fn push_token(&mut self, token: impl Into<Token>) {
-        self.tokens_mut().push(token.into());
+    pub fn head_spacing_visible(&self) -> bool {
+        self.head_spacing_visible
     }
 
-    pub fn with(mut self, token: impl Into<Token>) -> Self {
-        self.push_token(token);
+    pub fn set_head_spacing_visible(&mut self, enabled: bool) {
+        self.head_spacing_visible = enabled;
+    }
+
+    pub fn with_head_spacing_visible(mut self) -> Self {
+        self.set_head_spacing_visible(true);
         self
     }
 
-    pub fn to_token(self) -> Token {
-        self.into()
+    pub fn with_head_spacing_invisible(mut self) -> Self {
+        self.set_head_spacing_visible(false);
+        self
+    }
+
+    pub fn tokens_raw(&self) -> &[Token] {
+        &self.tokens
+    }
+
+    pub fn tokens_raw_mut(&mut self) -> &mut Vec<Token> {
+        Arc::make_mut(&mut self.tokens)
+    }
+
+    pub fn push_token_raw(&mut self, token: impl Into<Token>) {
+        self.tokens_raw_mut().push(token.into());
+    }
+
+    pub fn with_raw(mut self, token: impl Into<Token>) -> Self {
+        self.push_token_raw(token);
+        self
     }
 
     // TODO: Normalize glued tokens together (e.g. if two identifiers are next to one-another, merge them into one)
@@ -1338,7 +1424,11 @@ impl TokenGroup {
         };
 
         buffer.push_str(self.delimiter().open_char());
-        for token in self.tokens() {
+        if self.head_spacing_visible() {
+			buffer.extend((0..self.head_spacing()).map(|_| ' '));
+		}
+
+        for token in self.tokens_raw() {
             token.display(buffer, margin);
         }
         buffer.push_str(self.delimiter().close_char());

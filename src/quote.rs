@@ -22,8 +22,18 @@ pub mod macro_internals {
     impl GroupBuilder {
         pub fn new(delimiter: GroupDelimiter) -> Self {
             Self {
-                // N.B. the `FORCE_LEFT` margin is replaced with something more appropriate later
-                group: TokenGroup::new(delimiter, GroupMargin::FORCE_LEFT, []),
+                group: {
+                    // N.B. the `FORCE_LEFT` margin is replaced with something more appropriate later
+                    let mut group = TokenGroup::new(delimiter, GroupMargin::FORCE_LEFT, []);
+                    if delimiter == GroupDelimiter::Virtual {
+                        // Our delimiter is `Virtual` iff we are called on the root-most group of a
+                        // `rote!` invocation. In these cases, we always want to ensure that the
+                        // spacing between the margin and the first token is actually visible, since
+                        // this is part of the block.
+                        group.set_head_spacing_visible(true);
+                    }
+                    group
+                },
                 last_line: 0,
                 last_column: 0,
                 first_column: u32::MAX,
@@ -70,12 +80,13 @@ pub mod macro_internals {
             let delta_line = line.checked_sub(self.last_line).expect(BACKWARDS_ERR);
 
             if delta_line > 0 {
-                self.group.push_token(TokenSpacing::new(delta_line, column));
+                self.group
+                    .push_token_raw(TokenSpacing::new(delta_line, column));
             } else {
                 let delta_column = column.checked_sub(self.last_column).expect(BACKWARDS_ERR);
                 if delta_column > 0 {
                     self.group
-                        .push_token(TokenSpacing::new_spaces(delta_column));
+                        .push_token_raw(TokenSpacing::new_spaces(delta_column));
                 }
             }
 
@@ -83,7 +94,7 @@ pub mod macro_internals {
         }
 
         pub fn with_token(mut self, token: impl Into<Token>) -> Self {
-            self.group.push_token(token.into());
+            self.group.push_token_raw(token.into());
             self
         }
 
@@ -96,17 +107,20 @@ pub mod macro_internals {
             // that groups can be intuitively moved around without also accidentally copying
             // whitespace that logically originates from a parent group.
             {
+                // Determine the head token margin spacing
+                let head_spacing = self.first_column - self.margin_column;
+                self.group.set_head_spacing(head_spacing);
+
                 // Define the margin to be relative to the cursor position at the open delimiter.
                 // Users can safely overwrite this later, although the position of the first token,
                 // if it's not at the shared margin of the group, could change positions. This is
                 // almost certainly the desired behavior, however.
-                self.group.set_margin(GroupMargin::RelativeToCursor(
-                    -((self.first_column - self.margin_column) as i32),
-                ));
+                self.group
+                    .set_margin(GroupMargin::RelativeToCursor(-(head_spacing as i32)));
 
                 // Normalize line starts to the minimum margin.
                 // FIXME: This clobbers raw newlines injected into the stream.
-                for token in self.group.tokens_mut() {
+                for token in self.group.tokens_raw_mut() {
                     if let Token::Spacing(spacing) = token {
                         if spacing.lines() > 0 {
                             spacing.set_spaces(spacing.spaces() - self.margin_column);

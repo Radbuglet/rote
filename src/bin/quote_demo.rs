@@ -7,7 +7,8 @@ fn main() {
     println!(
         "===\n{}.",
         dbg!(Token::from(rote! {
-            whee
+                whee
+            woo
             $${debug_show_margin()}
                 {example 'a}
                 $${debug_show_margin()}
