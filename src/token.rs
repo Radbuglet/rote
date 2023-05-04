@@ -1,11 +1,9 @@
 use std::{
     any::{Any, TypeId},
     borrow::Cow,
-    fmt::{self, Debug},
+    fmt::{self, Debug, Write},
     sync::Arc,
 };
-
-use crate::util::FmtRepeat;
 
 // === Token === //
 
@@ -137,6 +135,8 @@ impl TokenGroup {
         self.push_token(token);
         self
     }
+
+    // TODO: Normalize glued tokens together (e.g. if two identifiers are next to one-another, merge them into one)
 }
 
 #[derive(Debug, Copy, Clone, Hash, Eq, PartialEq)]
@@ -170,26 +170,18 @@ impl GroupDelimiter {
 #[derive(Debug, Copy, Clone, Hash, Eq, PartialEq)]
 pub enum GroupMargin {
     Absolute(u32),
-    RelativeToMargin(i32),
+    RelativeToLineStart(i32),
     RelativeToCursor(i32),
+    RelativeToMargin(i32),
 }
 
 impl GroupMargin {
     pub const TAB_SIZE: i32 = 4;
 
-    pub const RESET: Self = Self::Absolute(0);
-    pub const INERT: Self = Self::RelativeToMargin(0);
-    pub const INDENT: Self = Self::RelativeToMargin(Self::TAB_SIZE);
-    pub const UNINDENT: Self = Self::RelativeToMargin(-Self::TAB_SIZE);
-    pub const PRESERVE: Self = Self::RelativeToCursor(0);
-
-    pub const fn indent(count: i32) -> Self {
-        Self::RelativeToMargin(Self::TAB_SIZE * count)
-    }
-
-    pub const fn deindent(count: i32) -> Self {
-        Self::RelativeToMargin(-Self::TAB_SIZE * count)
-    }
+    pub const FORCE_LEFT: Self = Self::Absolute(0);
+    pub const KEEP_MARGIN: Self = Self::RelativeToMargin(0);
+    pub const AT_LINE: Self = Self::RelativeToLineStart(0);
+    pub const AT_CURSOR: Self = Self::RelativeToCursor(0);
 }
 
 // === TokenIdent === //
@@ -206,7 +198,7 @@ impl TokenIdent {
         }
     }
 
-    // TODO: handle normalization
+    // TODO: handle identifier normalization
 
     pub fn ident(&self) -> &str {
         &self.ident
@@ -1302,81 +1294,89 @@ impl<T: Directive> ErasedDirective for T {
 // === Display === //
 
 impl Token {
-    fn display(&self, f: &mut fmt::Formatter, margin: u32) -> fmt::Result {
+    fn display(&self, buffer: &mut String, margin: u32) {
         match self {
-            Token::Group(token) => token.display(f, margin),
-            Token::Ident(token) => token.display(f, margin),
-            Token::Punct(token) => token.display(f, margin),
-            Token::Literal(token) => token.display(f, margin),
-            Token::Comment(token) => token.display(f, margin),
-            Token::Spacing(token) => token.display(f, margin),
-            Token::Directive(token) => token.display(f, margin),
+            Token::Group(token) => token.display(buffer, margin),
+            Token::Ident(token) => token.display(buffer, margin),
+            Token::Punct(token) => token.display(buffer, margin),
+            Token::Literal(token) => token.display(buffer, margin),
+            Token::Comment(token) => token.display(buffer, margin),
+            Token::Spacing(token) => token.display(buffer, margin),
+            Token::Directive(token) => token.display(buffer, margin),
         }
     }
 }
 
 impl fmt::Display for Token {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        self.display(f, 0)
+        let mut buffer = String::new();
+        self.display(&mut buffer, 0);
+        f.write_str(&buffer)
     }
 }
 
 impl TokenGroup {
-    fn display(&self, f: &mut fmt::Formatter, margin: u32) -> fmt::Result {
+    fn display(&self, buffer: &mut String, margin: u32) {
+        let curr_line = buffer.lines().last().unwrap_or("");
         let margin = match self.margin() {
             GroupMargin::Absolute(abs) => abs,
+            GroupMargin::RelativeToLineStart(rel) => {
+                let margin = curr_line.chars().take_while(|c| c.is_whitespace()).count() as u32;
+                margin.saturating_add_signed(rel)
+            }
+            GroupMargin::RelativeToCursor(rel) => {
+                let margin = curr_line.len() as u32;
+                margin.saturating_add_signed(rel)
+            }
             GroupMargin::RelativeToMargin(rel) => margin.saturating_add_signed(rel),
-            GroupMargin::RelativeToCursor(_) => todo!(),
         };
 
-        write!(f, "{}", self.delimiter().open_char())?;
+        buffer.push_str(self.delimiter().open_char());
         for token in self.tokens() {
-            token.display(f, margin)?;
+            token.display(buffer, margin);
         }
-        write!(f, "{}", self.delimiter().close_char())?;
-        Ok(())
+        buffer.push_str(self.delimiter().close_char());
     }
 }
 
 impl TokenIdent {
-    fn display(&self, f: &mut fmt::Formatter, _margin: u32) -> fmt::Result {
-        write!(f, "{}", self.ident())
+    fn display(&self, buffer: &mut String, _margin: u32) {
+        buffer.push_str(self.ident());
     }
 }
 
 impl TokenPunct {
-    fn display(&self, f: &mut fmt::Formatter, _margin: u32) -> fmt::Result {
-        write!(f, "{}", self.char())
+    fn display(&self, buffer: &mut String, _margin: u32) {
+        buffer.push(self.char());
     }
 }
 
 impl TokenLiteral {
-    fn display(&self, f: &mut fmt::Formatter, _margin: u32) -> fmt::Result {
+    fn display(&self, buffer: &mut String, _margin: u32) {
         // FIXME: Multiline literals inherit spacing from the file, not the relative context.
-        write!(f, "{}", self.quoted())
+        buffer.push_str(self.quoted());
     }
 }
 
 impl TokenComment {
-    fn display(&self, f: &mut fmt::Formatter, _margin: u32) -> fmt::Result {
+    fn display(&self, _buffer: &mut String, _margin: u32) {
         todo!()
     }
 }
 
 impl TokenSpacing {
-    fn display(&self, f: &mut fmt::Formatter, margin: u32) -> fmt::Result {
+    fn display(&self, buffer: &mut String, margin: u32) {
         if self.lines > 0 {
-            write!(f, "{}", FmtRepeat('\n', self.lines as usize))?;
-            write!(f, "{}", FmtRepeat(' ', margin as usize))?;
+            buffer.extend((0..self.lines).map(|_| '\n'));
+            buffer.extend((0..margin).map(|_| ' '));
         }
 
-        write!(f, "{}", FmtRepeat(' ', self.spaces as usize))?;
-        Ok(())
+        buffer.extend((0..self.spaces).map(|_| ' '));
     }
 }
 
 impl TokenDirective {
-    fn display(&self, f: &mut fmt::Formatter, _margin: u32) -> fmt::Result {
-        write!(f, "${:?}", self.data())
+    fn display(&self, buffer: &mut String, _margin: u32) {
+        write!(buffer, "${:?}", self.data()).unwrap();
     }
 }

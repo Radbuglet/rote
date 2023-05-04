@@ -1,18 +1,12 @@
-use rote::{quote::rote, token::Directive};
+use rote::{quote::rote, token::Token};
 
-#[rustfmt::skip]
 fn main() {
-    println!("{}.", rote! {
-		pub struct Whee<'a> {
-			ceci
-			est un meme
-			"whee? sqfklsj"
-			woo
-		}
-	});
+    println!(
+        "===\n{}.",
+        dbg!(Token::from(rote! {
+            whee
+                {example 'a}
+            margin
+        }))
+    );
 }
-
-#[derive(Debug, Clone)]
-pub struct MyDirective;
-
-impl Directive for MyDirective {}

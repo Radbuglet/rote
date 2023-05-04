@@ -5,15 +5,16 @@ use quote::{quote, quote_spanned};
 #[proc_macro]
 pub fn rote(input: NativeTokenStream) -> NativeTokenStream {
     let crate_ = quote!(::rote::quote::macro_internals);
-
-    make_group_builder(
+    let mut output = make_group_builder(
         &crate_,
         input.into(),
         quote! {
             #crate_::GroupBuilder::new(#crate_::GroupDelimiter::Virtual)
         },
-    )
-    .into()
+    );
+    output.extend(quote! { .finish() });
+
+    output.into()
 }
 
 fn make_group_builder(
@@ -25,6 +26,7 @@ fn make_group_builder(
 
     let token_pos_ctor = |span, line_offset: u32, column_offset: u32| {
         let crate_ = re_span(crate_.clone(), span);
+
         quote_spanned! { span =>
             #crate_::line!() + #line_offset, #crate_::column!() + #column_offset
         }
@@ -39,7 +41,8 @@ fn make_group_builder(
             TokenTree::Group(group) => {
                 // Determine the delimiter locations
                 let start_getter = token_pos_ctor(group.span_open(), 0, 0);
-                let end_getter = token_pos_ctor(group.span_close(), 0, 0);
+                let pre_end_getter = token_pos_ctor(group.span_close(), 0, 0);
+                let end_getter = token_pos_ctor(group.span_close(), 0, 1);
 
                 // Create a builder for the sub-group
                 let delimiter = match group.delimiter() {
@@ -53,15 +56,21 @@ fn make_group_builder(
                     Delimiter::None => quote! { Virtual },
                 };
 
-                let sub_group = make_group_builder(
+                let mut sub_group = make_group_builder(
                     crate_,
                     group.stream(),
                     quote! {
-                        #crate_::GroupBuilder::new(
-                            #crate_::GroupDelimiter::#delimiter,
-                        )
+                        #crate_::GroupBuilder::new(#crate_::GroupDelimiter::#delimiter)
+                            // Align our sub group cursor to the start delimiter
+                            .with_warped_cursor(#start_getter)
                     },
                 );
+                sub_group.extend(quote! {
+                    // Pad our sub group cursor to right before the end delimiter
+                    .with_moved_cursor(#pre_end_getter)
+                    // Transform our subgroup into a token
+                    .finish()
+                });
 
                 // Add our subgroup to the main group
                 main_group.extend(quote! {
@@ -184,24 +193,23 @@ fn make_group_builder(
             }
             TokenTree::Literal(literal) => {
                 let source = literal.to_string();
-                let start_getter = token_pos_ctor(literal.span(), 0, 0);
-                let end_getter = token_pos_ctor(
-                    literal.span(),
-                    source.lines().count() as u32 - 1,
-                    source.lines().last().unwrap().len() as u32,
-                );
+                if !source.is_empty() {
+                    let start_getter = token_pos_ctor(literal.span(), 0, 0);
+                    let end_getter = token_pos_ctor(
+                        literal.span(),
+                        source.lines().count() as u32 - 1,
+                        source.lines().last().unwrap().len() as u32,
+                    );
 
-                main_group.extend(quote! {
-                    .with_moved_cursor(#start_getter)
-                    .with_token(#crate_::TokenLiteral::from_quote(#source))
-                    .with_warped_cursor(#end_getter)
-                });
+                    main_group.extend(quote! {
+                        .with_moved_cursor(#start_getter)
+                        .with_token(#crate_::TokenLiteral::from_quote(#source))
+                        .with_warped_cursor(#end_getter)
+                    });
+                }
             }
         };
     }
-
-    // Transform the builder into a token
-    main_group.extend(quote! { .finish() });
 
     main_group
 }

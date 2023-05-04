@@ -15,47 +15,61 @@ pub mod macro_internals {
         group: TokenGroup,
         last_line: u32,
         last_column: u32,
-        column_margin: u32,
+        first_column: u32,
+        margin_column: u32,
     }
 
     impl GroupBuilder {
         pub fn new(delimiter: GroupDelimiter) -> Self {
             Self {
-                group: TokenGroup::new(delimiter, GroupMargin::INERT, []),
-                last_line: u32::MAX,
-                last_column: u32::MAX,
-                column_margin: u32::MAX,
+                // N.B. the `FORCE_LEFT` margin is replaced with something more appropriate later
+                group: TokenGroup::new(delimiter, GroupMargin::FORCE_LEFT, []),
+                last_line: 0,
+                last_column: 0,
+                first_column: u32::MAX,
+                margin_column: u32::MAX,
             }
         }
 
         pub fn with_warped_cursor(mut self, line: u32, column: u32) -> Self {
+            // Update the margin
+            if column < self.margin_column {
+                self.margin_column = column;
+            }
+
+            // Update the first column
+            if self.first_column == u32::MAX {
+                self.first_column = column;
+            }
+
+            // Warp the cursor
             self.last_line = line;
             self.last_column = column;
-            if self.column_margin == u32::MAX {
-                self.column_margin = column;
-            }
 
             self
         }
 
         pub fn with_moved_cursor(mut self, line: u32, column: u32) -> Self {
+            // Update the margin
+            if column < self.margin_column {
+                self.margin_column = column;
+            }
+
             // Warp cursor to first position
-            if self.last_line == u32::MAX {
+            if self.first_column == u32::MAX {
                 self.last_line = line;
                 self.last_column = column;
-                self.column_margin = column;
+                self.first_column = column;
             }
 
             // Insert relative cursor spacing
             const BACKWARDS_ERR: &'static str =
                 "The location of the token being quoted has seem to have gone backwards. \
-				 Was the first line of the quote not at the minimum indentation level? \
-				 Is `rote!` mixing spans?";
+                 Is `rote!` mixing spans?";
 
             let delta_line = line.checked_sub(self.last_line).expect(BACKWARDS_ERR);
 
             if delta_line > 0 {
-                let column = column.checked_sub(self.column_margin).expect(BACKWARDS_ERR);
                 self.group.push_token(TokenSpacing::new(delta_line, column));
             } else {
                 let delta_column = column.checked_sub(self.last_column).expect(BACKWARDS_ERR);
@@ -73,8 +87,34 @@ pub mod macro_internals {
             self
         }
 
-        pub fn finish(self) -> Token {
-            self.group.into()
+        pub fn finish(mut self) -> TokenGroup {
+            // Normalize token groups such that they don't have any common spacing in front of them.
+            //
+            // A desired property of token groups is that their whitespace is maximally compact.
+            // That is, there shouldn't be a space-introduced margin common to every line. Rather,
+            // the margin should be part of the token group's regular formatting margin. This ensures
+            // that groups can be intuitively moved around without also accidentally copying
+            // whitespace that logically originates from a parent group.
+            {
+                // Define the margin to be relative to the cursor position at the open delimiter.
+                // Users can safely overwrite this later, although the position of the first token,
+                // if it's not at the shared margin of the group, could change positions. This is
+                // almost certainly the desired behavior, however.
+                self.group.set_margin(GroupMargin::RelativeToCursor(
+                    -((self.first_column - self.margin_column) as i32),
+                ));
+
+                // Normalize line starts to the minimum margin.
+                for token in self.group.tokens_mut() {
+                    if let Token::Spacing(spacing) = token {
+                        if spacing.lines() > 0 {
+                            spacing.set_spaces(spacing.spaces() - self.margin_column);
+                        }
+                    }
+                }
+            }
+
+            self.group
         }
     }
 }
