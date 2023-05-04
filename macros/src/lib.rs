@@ -136,7 +136,7 @@ fn make_group_builder(
                             // Consume the embedded group
                             if let Some(TokenTree::Group(embedded)) = input_fork.next() {
                                 // Build the main group extension
-                                let end_getter = token_pos_ctor(embedded.span_close(), 0, 0);
+                                let end_getter = token_pos_ctor(embedded.span_close(), 0, 1);
 
                                 main_group.extend(quote! {
                                     .with_moved_cursor(#start_getter)
@@ -158,7 +158,7 @@ fn make_group_builder(
                             ) =>
                         {
                             // Build the main group extension
-                            let end_getter = token_pos_ctor(directive.span_close(), 0, 0);
+                            let end_getter = token_pos_ctor(directive.span_close(), 0, 1);
                             let crate_ = re_span(crate_.clone(), directive.span());
                             let directive_inner = directive.stream();
 

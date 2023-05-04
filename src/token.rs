@@ -5,6 +5,8 @@ use std::{
     sync::Arc,
 };
 
+use crate::quote::rote;
+
 // === Token === //
 
 #[derive(Debug, Clone)]
@@ -136,6 +138,10 @@ impl TokenGroup {
         self
     }
 
+    pub fn to_token(self) -> Token {
+        self.into()
+    }
+
     // TODO: Normalize glued tokens together (e.g. if two identifiers are next to one-another, merge them into one)
 }
 
@@ -179,7 +185,7 @@ impl GroupMargin {
     pub const TAB_SIZE: i32 = 4;
 
     pub const FORCE_LEFT: Self = Self::Absolute(0);
-    pub const KEEP_MARGIN: Self = Self::RelativeToMargin(0);
+    pub const AT_MARGIN: Self = Self::RelativeToMargin(0);
     pub const AT_LINE: Self = Self::RelativeToLineStart(0);
     pub const AT_CURSOR: Self = Self::RelativeToCursor(0);
 }
@@ -1379,4 +1385,13 @@ impl TokenDirective {
     fn display(&self, buffer: &mut String, _margin: u32) {
         write!(buffer, "${:?}", self.data()).unwrap();
     }
+}
+
+pub fn debug_show_margin() -> Token {
+    rote! {
+        $$<debug_show_margin>
+        <- the margin is here!
+    }
+    .with_margin(GroupMargin::AT_MARGIN)
+    .to_token()
 }

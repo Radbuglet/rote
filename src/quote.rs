@@ -105,6 +105,7 @@ pub mod macro_internals {
                 ));
 
                 // Normalize line starts to the minimum margin.
+                // FIXME: This clobbers raw newlines injected into the stream.
                 for token in self.group.tokens_mut() {
                     if let Token::Spacing(spacing) = token {
                         if spacing.lines() > 0 {
