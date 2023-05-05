@@ -5,6 +5,8 @@ use std::{
     sync::Arc,
 };
 
+use unicode_xid::UnicodeXID;
+
 use crate::quote::rote;
 
 // === Token === //
@@ -128,12 +130,16 @@ impl_token_to_instance_conversions!(
 pub struct TokenGroup {
     delimiter: GroupDelimiter,
     margin: GroupMargin,
+    // TODO: `head_spacing` is only necessary for virtual groups. Consider making this a mode indication?
     head_spacing: u32,
     head_spacing_visible: bool,
+    is_normalized: bool,
     tokens: Arc<Vec<Token>>,
 }
 
 impl TokenGroup {
+    // === Constructors === //
+
     pub fn new(
         delimiter: GroupDelimiter,
         margin: GroupMargin,
@@ -144,6 +150,7 @@ impl TokenGroup {
             margin,
             head_spacing: 0,
             head_spacing_visible: false,
+            is_normalized: true,
             tokens: Arc::new(Vec::from_iter(tokens)),
         }
     }
@@ -164,6 +171,9 @@ impl TokenGroup {
         Self::new(GroupDelimiter::Parenthesis, margin, [])
     }
 
+    // === Setters and Getters === //
+
+    // delimiter
     pub fn delimiter(&self) -> GroupDelimiter {
         self.delimiter
     }
@@ -172,6 +182,7 @@ impl TokenGroup {
         self.delimiter = delimiter;
     }
 
+    // margin
     pub fn margin(&self) -> GroupMargin {
         self.margin
     }
@@ -185,6 +196,7 @@ impl TokenGroup {
         self
     }
 
+    // head_spacing
     pub fn head_spacing(&self) -> u32 {
         self.head_spacing
     }
@@ -211,24 +223,32 @@ impl TokenGroup {
         self
     }
 
-    pub fn tokens_raw(&self) -> &[Token] {
+    // tokens
+    pub fn tokens(&self) -> &[Token] {
         &self.tokens
     }
 
-    pub fn tokens_raw_mut(&mut self) -> &mut Vec<Token> {
-        Arc::make_mut(&mut self.tokens)
+    pub fn tokens_mut_raw(&mut self) -> &mut Vec<Token> {
+        self.is_normalized = false;
+        self.tokens_mut_no_invalidate()
     }
 
     pub fn push_token_raw(&mut self, token: impl Into<Token>) {
-        self.tokens_raw_mut().push(token.into());
+        self.is_normalized = false;
+        self.tokens_mut_raw().push(token.into());
     }
 
     pub fn with_raw(mut self, token: impl Into<Token>) -> Self {
+        self.is_normalized = false;
         self.push_token_raw(token);
         self
     }
 
-    // TODO: Normalize glued tokens together (e.g. if two identifiers are next to one-another, merge them into one)
+    // === Helpers === //
+
+    fn tokens_mut_no_invalidate(&mut self) -> &mut Vec<Token> {
+        Arc::make_mut(&mut self.tokens)
+    }
 }
 
 #[derive(Debug, Copy, Clone, Hash, Eq, PartialEq)]
@@ -259,9 +279,10 @@ impl GroupDelimiter {
     }
 }
 
+// TODO: Be more specific about the nesting rules of groups. In particular, make sure that margins
+// cannot decrease between groups.
 #[derive(Debug, Copy, Clone, Hash, Eq, PartialEq)]
 pub enum GroupMargin {
-    Absolute(u32),
     RelativeToLineStart(i32),
     RelativeToCursor(i32),
     RelativeToMargin(i32),
@@ -270,10 +291,111 @@ pub enum GroupMargin {
 impl GroupMargin {
     pub const TAB_SIZE: i32 = 4;
 
-    pub const FORCE_LEFT: Self = Self::Absolute(0);
     pub const AT_MARGIN: Self = Self::RelativeToMargin(0);
     pub const AT_LINE: Self = Self::RelativeToLineStart(0);
     pub const AT_CURSOR: Self = Self::RelativeToCursor(0);
+}
+
+// === TokenGroup Normalization === //
+
+impl TokenGroup {
+    pub fn push_token_normalized_inner(tokens: &mut Vec<Token>, token: impl Into<Token>) {
+        // This method enforces the following invariants:
+        //
+        // - Pure white-spaces are only produced by a single isolated `Spacing` token.
+        //   - This implies that trailing whitespace is impossible to produce in a normalized stream.
+        // - Virtual groups are flattened into their equivalent token sequence.
+        // - There are no zero-sized tokens.
+        // - Identifiers are combined into single valid identifiers.
+        // - Identifiers and literals can never be glued to one another.
+        //
+
+        match token.into() {
+            Token::Group(mut group) => {
+                group.normalize();
+
+                if group.delimiter() == GroupDelimiter::Virtual {
+                    // If the group is virtual, we need to inline the group tokens.
+
+                    // Generate stats about the last line of this group when displayed with zero
+                    // leading margin.
+                    let (cursor_pos, line_start_pos) = {
+                        let mut tokens = tokens.iter().rev();
+                        compute_line_margin_info(|tmp| {
+                            let token = tokens.next()?;
+                            token.display(tmp, 0);
+                            Some(tmp)
+                        })
+                    };
+
+                    // Determine the relative margin for tokens in this group.
+                    let margin = match group.margin() {
+                        GroupMargin::RelativeToLineStart(rel) => {
+                            line_start_pos.saturating_add_signed(rel)
+                        }
+                        GroupMargin::RelativeToCursor(rel) => cursor_pos.saturating_add_signed(rel),
+                        GroupMargin::RelativeToMargin(rel) => rel as u32,
+                    };
+
+                    // If the group has head spacing enabled, include it.
+                    if group.head_spacing_visible() {
+                        Self::push_token_normalized_inner(
+                            tokens,
+                            TokenSpacing::new_spaces(group.head_spacing()),
+                        );
+                    }
+
+                // TODO
+                } else {
+                    // Otherwise, add the group in directly.
+                    tokens.push(group.into());
+                }
+            }
+            Token::Ident(_) => todo!(),
+            Token::Punct(_) => todo!(),
+            Token::Literal(_) => todo!(),
+            Token::Comment(_) => todo!(),
+            Token::Spacing(_) => todo!(),
+            Token::Directive(_) => todo!(),
+        }
+    }
+
+    pub fn push_token_normalized(&mut self, token: impl Into<Token>) {
+        // This method enforces the following invariants:
+        //
+        // - Pure white-spaces are only produced by a single isolated `Spacing` token.
+        //   - This implies that trailing whitespace is impossible to produce in a normalized stream.
+        // - Virtual groups are flattened into their equivalent token sequence.
+        // - There are no zero-sized tokens.
+        // - Identifiers are combined into single valid identifiers.
+        // - Identifiers and literals can never be glued to one another.
+        //
+
+        // We ensure that the entire group is already normalized to avoid wasting the effort of
+        // re-normalizing an already normalized sequence portion.
+        self.normalize();
+
+        // Then, we normalize the token additions.
+        let tokens = self.tokens_mut_no_invalidate();
+        Self::push_token_normalized_inner(tokens, token);
+    }
+
+    pub fn with_normalized(mut self, token: impl Into<Token>) -> Self {
+        self.push_token_normalized(token);
+        self
+    }
+
+    pub fn normalize(&mut self) -> &mut Self {
+        if self.is_normalized {
+            return self;
+        }
+
+        todo!()
+    }
+
+    pub fn clone_normalized(&self) -> Self {
+        todo!()
+    }
 }
 
 // === TokenIdent === //
@@ -284,25 +406,60 @@ pub struct TokenIdent {
 }
 
 impl TokenIdent {
+    // === Constructors, getters, and setters === //
+
     pub fn new(ident: impl Into<Cow<'static, str>>) -> Self {
         Self {
-            ident: ident.into(),
+            ident: Self::assert_possibly_valid(ident.into()),
         }
     }
-
-    // TODO: handle identifier normalization
 
     pub fn ident(&self) -> &str {
         &self.ident
     }
 
-    pub fn set_ident(&mut self, ident: impl Into<Cow<'static, str>>) {
-        self.ident = ident.into();
-    }
-
     pub fn ident_mut(&mut self) -> &mut String {
         self.ident.to_mut()
     }
+
+    pub fn set_ident(&mut self, ident: impl Into<Cow<'static, str>>) {
+        self.ident = Self::assert_possibly_valid(ident.into());
+    }
+
+    // === Validation === //
+
+    pub fn is_empty(&self) -> bool {
+        self.ident.is_empty()
+    }
+
+    pub fn is_valid(&self) -> bool {
+        Self::is_ident_str_valid(&self.ident)
+    }
+
+    pub fn is_valid_and_nonempty(&self) -> bool {
+        !self.is_empty() && self.is_valid()
+    }
+
+    pub fn is_ident_str_valid(text: &str) -> bool {
+        let mut text = text.chars();
+
+        // Ensure that the first character is either missing or is an `xid_start`.
+        text.next().map_or(true, |c| c.is_xid_start()) &&
+			// Ensure that all subsequent characters are `xid_continue`.
+			text.all(|c| c.is_xid_continue())
+    }
+
+    fn assert_possibly_valid(text: Cow<'static, str>) -> Cow<'static, str> {
+        debug_assert!(
+            text.chars()
+                .all(|c| c.is_xid_start() || c.is_xid_continue()),
+            "The identifier fragment {text:?} could never possibly be valid."
+        );
+
+        text
+    }
+
+    // TODO: handle identifier normalization
 }
 
 // === TokenPunct === //
@@ -1239,6 +1396,8 @@ pub struct TokenSpacing {
 }
 
 impl TokenSpacing {
+    // TODO: Add back support for outdentation?
+
     pub const NEWLINE: Self = Self::new_lines(1);
     pub const SPACE: Self = Self::new_spaces(1);
 
@@ -1411,7 +1570,6 @@ impl TokenGroup {
     fn display(&self, buffer: &mut String, margin: u32) {
         let curr_line = buffer.lines().last().unwrap_or("");
         let margin = match self.margin() {
-            GroupMargin::Absolute(abs) => abs,
             GroupMargin::RelativeToLineStart(rel) => {
                 let margin = curr_line.chars().take_while(|c| c.is_whitespace()).count() as u32;
                 margin.saturating_add_signed(rel)
@@ -1425,10 +1583,10 @@ impl TokenGroup {
 
         buffer.push_str(self.delimiter().open_char());
         if self.head_spacing_visible() {
-			buffer.extend((0..self.head_spacing()).map(|_| ' '));
-		}
+            buffer.extend((0..self.head_spacing()).map(|_| ' '));
+        }
 
-        for token in self.tokens_raw() {
+        for token in self.tokens() {
             token.display(buffer, margin);
         }
         buffer.push_str(self.delimiter().close_char());
@@ -1484,4 +1642,67 @@ pub fn debug_show_margin() -> Token {
     }
     .with_margin(GroupMargin::AT_MARGIN)
     .to_token()
+}
+
+// TODO: Merge this implementation with the group formatter's implementation to avoid inconsistencies.
+fn compute_line_margin_info(
+    mut next_fragment: impl FnMut(&mut String) -> Option<&str>,
+) -> (u32, u32) {
+    let mut char_count = 0u32;
+    let mut accumulated_space_count = 0u32;
+    let mut tmp = String::new();
+
+    while let Some(fragment) = next_fragment(&mut tmp) {
+        // Find the last line in this fragment.
+        let (line_idx, line_text) = fragment
+            // Unlike `.lines()`, `.split()` contains a trailing line. It also
+            // contains `\r` but we don't worry about any lines besides the last
+            // one anyways so that isn't too big of a deal.
+            .split("\n")
+            .enumerate()
+            .last()
+            // N.B. After normalization, there should never be a token resolving to
+            // an empty character sequence. Hence, this should always return a
+            // "line."
+            .unwrap();
+
+        // For every character, going from left to right...
+        let mut local_space_count = 0;
+        let mut matching_spaces = true;
+
+        for char in line_text.chars() {
+            // Increment the total character counter
+            char_count += 1;
+
+            // If we're still matching spaces...
+            if matching_spaces {
+                // Increment the space counter if applicable
+                if char.is_whitespace() {
+                    local_space_count += 1;
+                } else {
+                    // If we reached the end of the whitespace section before the
+                    // end of the fragment, set the accumulated space count to zero.
+                    accumulated_space_count = 0;
+                    matching_spaces = false;
+                }
+            }
+        }
+
+        // Add the `local_space_count` to the `accumulated_space_count`. If we
+        // found a non-whitespace character in our fragment, the accumulated
+        // space count will be zero and will thus correctly reflect the fact
+        // that only the most recent fragment has contributed white-spaces.
+        accumulated_space_count += local_space_count;
+
+        // If the `line_idx` is not zero, we know that our sequence contained `\n`,
+        // telling us that we're done processing the line.
+        if line_idx != 0 {
+            break;
+        }
+
+        // If we're not breaking, clear the temporary buffer.
+        tmp.clear();
+    }
+
+    (char_count, accumulated_space_count)
 }

@@ -1,12 +1,9 @@
-use rote::{
-    quote::rote,
-    token::{debug_show_margin, Token},
-};
+use rote::{quote::rote, token::debug_show_margin};
 
 fn main() {
     println!(
         "===\n{}.",
-        dbg!(Token::from(rote! {
+        dbg!(rote! {
                 whee
             woo
             $${debug_show_margin()}
@@ -21,6 +18,7 @@ fn main() {
                 }}<=END
                 $${debug_show_margin()}
             margin
-        }))
+        }
+        .to_token())
     );
 }

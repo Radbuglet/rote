@@ -23,8 +23,9 @@ pub mod macro_internals {
         pub fn new(delimiter: GroupDelimiter) -> Self {
             Self {
                 group: {
-                    // N.B. the `FORCE_LEFT` margin is replaced with something more appropriate later
-                    let mut group = TokenGroup::new(delimiter, GroupMargin::FORCE_LEFT, []);
+                    // N.B. `GroupMargin::AT_CURSOR` is a placeholder that will be replaced during
+                    // `.finish()`.
+                    let mut group = TokenGroup::new(delimiter, GroupMargin::AT_CURSOR, []);
                     if delimiter == GroupDelimiter::Virtual {
                         // Our delimiter is `Virtual` iff we are called on the root-most group of a
                         // `rote!` invocation. In these cases, we always want to ensure that the
@@ -119,8 +120,8 @@ pub mod macro_internals {
                     .set_margin(GroupMargin::RelativeToCursor(-(head_spacing as i32)));
 
                 // Normalize line starts to the minimum margin.
-                // FIXME: This clobbers raw newlines injected into the stream.
-                for token in self.group.tokens_raw_mut() {
+                // FIXME: This clobbers raw newlines injected directly into the stream.
+                for token in self.group.tokens_mut_raw() {
                     if let Token::Spacing(spacing) = token {
                         if spacing.lines() > 0 {
                             spacing.set_spaces(spacing.spaces() - self.margin_column);
