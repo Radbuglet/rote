@@ -6,6 +6,11 @@ fn main() {
         dbg!(rote! {
                 whee
             woo
+                {
+               whee
+            woo
+            }
+            {
             $${debug_show_margin()}
                 {example 'a}
                 $${debug_show_margin()}
@@ -17,6 +22,7 @@ fn main() {
                     $${debug_show_margin()}
                 }}<=END
                 $${debug_show_margin()}
+            }
             margin
         }
         .to_token())

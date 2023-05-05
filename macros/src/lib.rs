@@ -41,6 +41,7 @@ fn make_group_builder(
             TokenTree::Group(group) => {
                 // Determine the delimiter locations
                 let start_getter = token_pos_ctor(group.span_open(), 0, 0);
+                let post_start_getter = token_pos_ctor(group.span_open(), 0, 1);
                 let pre_end_getter = token_pos_ctor(group.span_close(), 0, 0);
                 let end_getter = token_pos_ctor(group.span_close(), 0, 1);
 
@@ -62,7 +63,7 @@ fn make_group_builder(
                     quote! {
                         #crate_::GroupBuilder::new(#crate_::GroupDelimiter::#delimiter)
                             // Align our sub group cursor to the start delimiter
-                            .with_warped_cursor(#start_getter)
+                            .with_warped_cursor(#post_start_getter)
                     },
                 );
                 sub_group.extend(quote! {

@@ -130,7 +130,6 @@ impl_token_to_instance_conversions!(
 pub struct TokenGroup {
     delimiter: GroupDelimiter,
     margin: GroupMargin,
-    // TODO: `head_spacing` is only necessary for virtual groups. Consider making this a mode indication?
     head_spacing: u32,
     head_spacing_visible: bool,
     is_normalized: bool,
@@ -337,15 +336,7 @@ impl TokenGroup {
                         GroupMargin::RelativeToMargin(rel) => rel as u32,
                     };
 
-                    // If the group has head spacing enabled, include it.
-                    if group.head_spacing_visible() {
-                        Self::push_token_normalized_inner(
-                            tokens,
-                            TokenSpacing::new_spaces(group.head_spacing()),
-                        );
-                    }
-
-                // TODO
+                    // TODO
                 } else {
                     // Otherwise, add the group in directly.
                     tokens.push(group.into());
@@ -396,6 +387,10 @@ impl TokenGroup {
     pub fn clone_normalized(&self) -> Self {
         todo!()
     }
+}
+
+impl Token {
+    // TODO: `normalize_if_group` variants
 }
 
 // === TokenIdent === //
@@ -1568,6 +1563,16 @@ impl fmt::Display for Token {
 
 impl TokenGroup {
     fn display(&self, buffer: &mut String, margin: u32) {
+        // Push the delimiter
+        if self.head_spacing_visible() {
+            buffer.extend(
+                (0..(self.head_spacing() - self.delimiter.open_char().len() as u32)).map(|_| ' '),
+            );
+        }
+
+        buffer.push_str(self.delimiter().open_char());
+
+        // Determine the margin for the line
         let curr_line = buffer.lines().last().unwrap_or("");
         let margin = match self.margin() {
             GroupMargin::RelativeToLineStart(rel) => {
@@ -1580,11 +1585,6 @@ impl TokenGroup {
             }
             GroupMargin::RelativeToMargin(rel) => margin.saturating_add_signed(rel),
         };
-
-        buffer.push_str(self.delimiter().open_char());
-        if self.head_spacing_visible() {
-            buffer.extend((0..self.head_spacing()).map(|_| ' '));
-        }
 
         for token in self.tokens() {
             token.display(buffer, margin);
