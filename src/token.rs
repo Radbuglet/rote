@@ -299,12 +299,10 @@ pub enum GroupMargin {
     RelativeToCursor(i32),
 
     // Margin-relative margins are relative to the parent margin setting. It's as shrimple as that.
-    RelativeToMargin(i32),
+    RelativeToMargin(u32),
 }
 
 impl GroupMargin {
-    pub const TAB_SIZE: i32 = 4;
-
     pub const AT_MARGIN: Self = Self::RelativeToMargin(0);
     pub const AT_LINE: Self = Self::RelativeToLineStart(0);
     pub const AT_CURSOR: Self = Self::RelativeToCursor(0);
@@ -1737,7 +1735,7 @@ impl TokenGroup {
         match self.margin() {
             GroupMargin::RelativeToLineStart(rel) => line_start_pos.saturating_add_signed(rel),
             GroupMargin::RelativeToCursor(rel) => cursor_pos.saturating_add_signed(rel),
-            GroupMargin::RelativeToMargin(rel) => base_margin.saturating_add_signed(rel),
+            GroupMargin::RelativeToMargin(rel) => base_margin.saturating_add(rel),
         }
     }
 

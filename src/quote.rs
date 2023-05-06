@@ -21,17 +21,18 @@ pub mod macro_internals {
         last_column: u32,
         first_column: u32,
         margin_column: u32,
+        needs_update: Vec<usize>,
     }
 
     impl GroupBuilder {
         pub fn new(delimiter: GroupDelimiter) -> Self {
             Self {
                 group: {
-                    // N.B. `GroupMargin::AT_CURSOR` is a placeholder that will be replaced during
-                    // `.finish()`.
+                    // `AT_CURSOR` is just a sensible default which users can easily overwrite if
+                    // need be. In particular, the macro replaces this with a margin-relative margin.
                     let mut group = TokenGroup::new(delimiter, GroupMargin::AT_CURSOR, []);
                     if delimiter == GroupDelimiter::Virtual {
-                        // Our delimiter is `Virtual` iff we are called on the root-most group of a
+                        // Our delimiter is `Virtual` *iff* we are called on the root-most group of a
                         // `rote!` invocation. In these cases, we always want to ensure that the
                         // spacing between the margin and the first token is actually visible, since
                         // this is part of the block.
@@ -43,6 +44,7 @@ pub mod macro_internals {
                 last_column: 0,
                 first_column: u32::MAX,
                 margin_column: u32::MAX,
+                needs_update: Vec::new(),
             }
         }
 
@@ -85,7 +87,7 @@ pub mod macro_internals {
             let delta_line = line.checked_sub(self.last_line).expect(BACKWARDS_ERR);
 
             if delta_line > 0 {
-                self.group.push_raw(TokenSpacing::new(delta_line, column));
+                self.push_managed(TokenSpacing::new(delta_line, column));
             } else {
                 let delta_column = column.checked_sub(self.last_column).expect(BACKWARDS_ERR);
                 if delta_column > 0 {
@@ -98,6 +100,26 @@ pub mod macro_internals {
 
         pub fn with_token(mut self, token: impl Into<Token>) -> Self {
             self.group.push_raw(token.into());
+            self
+        }
+
+        pub fn push_managed(&mut self, token: impl Into<Token>) {
+            self.needs_update.push(self.group.tokens().len());
+            self.group.push_raw(token);
+        }
+
+        pub fn with_managed_group(
+            mut self,
+            _start_line: u32,
+            start_col: u32,
+            mut group: TokenGroup,
+        ) -> Self {
+            // We set the margin as if we were relative to the left of the file.
+            group.set_margin(GroupMargin::RelativeToMargin(
+                start_col - group.head_spacing(),
+            ));
+
+            self.push_managed(group);
             self
         }
 
@@ -114,20 +136,29 @@ pub mod macro_internals {
                 let head_spacing = self.first_column - self.margin_column;
                 self.group.set_head_spacing(head_spacing);
 
-                // Define the margin to be relative to the cursor position at the open delimiter.
-                // Users can safely overwrite this later, although the position of the first token,
-                // if it's not at the shared margin of the group, could change positions. This is
-                // almost certainly the desired behavior, however.
-                self.group
-                    .set_margin(GroupMargin::RelativeToCursor(-(head_spacing as i32)));
-
-                // Normalize line starts to the minimum margin.
-                // FIXME: This clobbers raw newlines injected directly into the stream.
-                for token in self.group.tokens_mut_raw() {
-                    if let Token::Spacing(spacing) = token {
-                        if spacing.lines() > 0 {
-                            spacing.set_spaces(spacing.spaces() - self.margin_column);
+                // Normalize macro-generated line starts to the minimum margin.
+                let tokens = self.group.tokens_mut_raw();
+                for i in self.needs_update {
+                    match &mut tokens[i] {
+                        // This space was produced relative to the start of the file.
+                        // Let's adjust it!
+                        Token::Spacing(spacing) => {
+                            if spacing.lines() > 0 {
+                                // N.B. this never underflows.
+                                spacing.set_spaces(spacing.spaces() - self.margin_column);
+                            }
                         }
+                        // This group's margin was produced relative to the start of the file.
+                        // Let's adjust it!
+                        Token::Group(group) => {
+                            if let GroupMargin::RelativeToMargin(old_rel) = group.margin() {
+                                // FIXME: Why does this underflow?
+                                group.set_margin(GroupMargin::RelativeToMargin(
+                                    old_rel - self.margin_column,
+                                ));
+                            }
+                        }
+                        _ => unreachable!(),
                     }
                 }
             }

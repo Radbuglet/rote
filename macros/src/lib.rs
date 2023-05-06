@@ -78,7 +78,7 @@ fn make_group_builder(
                     // Pad our main group up to the start location
                     .with_moved_cursor(#start_getter)
                     // Add our subgroup
-                    .with_token(#sub_group)
+                    .with_managed_group(#post_start_getter, #sub_group)
                     // Align our main group cursor to the end delimiter
                     .with_warped_cursor(#end_getter)
                 });

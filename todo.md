@@ -6,7 +6,7 @@
 - [ ] `Punct`s are not validated
 - [ ] Invariants are not specified or validated
 - [ ] Implementation of various format-adjacent systems isn't unified
-- [ ] Cursor-relative constructions break down if the origin line has expanded unexpectedly
+- [x] Cursor-relative constructions break down if the origin line has expanded unexpectedly
 - [ ] Cow implementation is suboptimal
 - [ ] We need unicode support in literals
 - [ ] We need support for comments
