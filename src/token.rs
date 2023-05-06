@@ -8,8 +8,6 @@ use std::{
 
 use unicode_xid::UnicodeXID;
 
-use crate::quote::rote;
-
 // === Token === //
 
 #[derive(Debug, Clone)]
@@ -244,14 +242,14 @@ impl TokenGroup {
         self.tokens_mut_no_invalidate()
     }
 
-    pub fn push_token_raw(&mut self, token: impl Into<Token>) {
+    pub fn push_raw(&mut self, token: impl Into<Token>) {
         self.is_normalized = false;
         self.tokens_mut_raw().push(token.into());
     }
 
     pub fn with_raw(mut self, token: impl Into<Token>) -> Self {
         self.is_normalized = false;
-        self.push_token_raw(token);
+        self.push_raw(token);
         self
     }
 
@@ -324,7 +322,7 @@ impl TokenGroup {
     // - Identifiers are combined into single valid identifiers.
     // - Identifiers and literals can never be glued to one another.
     //
-    pub fn push_token_normalized_inner(tokens: &mut Vec<Token>, token: impl Into<Token>) {
+    pub fn push_normalized_inner(tokens: &mut Vec<Token>, token: impl Into<Token>) {
         match token.into() {
             Token::Group(mut group) => {
                 group.normalize();
@@ -332,10 +330,7 @@ impl TokenGroup {
                 // Transform visible head spaces into regular spaces
                 if let Some(head_spacing) = group.head_spacing_size() {
                     group.set_head_spacing_visible(false);
-                    Self::push_token_normalized_inner(
-                        tokens,
-                        TokenSpacing::new_spaces(head_spacing),
-                    );
+                    Self::push_normalized_inner(tokens, TokenSpacing::new_spaces(head_spacing));
                 }
 
                 // If the delimiter is virtual, merge its contents into the stream directly.
@@ -360,7 +355,7 @@ impl TokenGroup {
                             }
                         }
 
-                        Self::push_token_normalized_inner(tokens, token);
+                        Self::push_normalized_inner(tokens, token);
                     }
                 } else {
                     // Otherwise, add the group in directly.
@@ -439,7 +434,7 @@ impl TokenGroup {
         }
     }
 
-    pub fn push_token_normalized(&mut self, token: impl Into<Token>) {
+    pub fn push_normalized(&mut self, token: impl Into<Token>) {
         // This method enforces the following invariants:
         //
         // - Pure white-spaces are only produced by a single isolated `Spacing` token.
@@ -456,11 +451,11 @@ impl TokenGroup {
 
         // Then, we normalize the token additions.
         let tokens = self.tokens_mut_no_invalidate();
-        Self::push_token_normalized_inner(tokens, token);
+        Self::push_normalized_inner(tokens, token);
     }
 
     pub fn with_normalized(mut self, token: impl Into<Token>) -> Self {
-        self.push_token_normalized(token);
+        self.push_normalized(token);
         self
     }
 
@@ -476,9 +471,14 @@ impl TokenGroup {
         let new_tokens = Arc::get_mut(&mut self.tokens).unwrap();
 
         for token in old_tokens.iter() {
-            Self::push_token_normalized_inner(new_tokens, token.clone());
+            Self::push_normalized_inner(new_tokens, token.clone());
         }
 
+        self
+    }
+
+    pub fn into_normalized(mut self) -> Self {
+        self.normalize();
         self
     }
 
@@ -491,7 +491,13 @@ impl TokenGroup {
 }
 
 impl Token {
-    // TODO: `normalize_if_group` variants
+    pub fn normalize_if_group(&mut self) -> &mut Self {
+        if let Some(group) = self.as_group_mut() {
+            group.normalize();
+        }
+
+        self
+    }
 }
 
 // === TokenIdent === //
@@ -1816,13 +1822,4 @@ impl TokenDirective {
     fn display(&self, buffer: &mut String, _margin: u32) {
         write!(buffer, "${:?}", self.data()).unwrap();
     }
-}
-
-pub fn debug_show_margin() -> Token {
-    rote! {
-        $$<debug_show_margin>
-        <- the margin is here!
-    }
-    .with_margin(GroupMargin::AT_MARGIN)
-    .to_token()
 }

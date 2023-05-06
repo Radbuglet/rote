@@ -25,29 +25,29 @@ impl<T: ?Sized> UnsizedVec<T> {
         self.values.push(value);
     }
 
-    pub fn try_get(&self, index: usize) -> Option<&T> {
-        self.values.get(index).map(|&v| unsafe { &*v })
-    }
-
-    pub fn try_get_mut(&mut self, index: usize) -> Option<&mut T> {
-        self.values.get_mut(index).map(|&mut v| unsafe { &mut *v })
-    }
-
-    pub fn get(&self, index: usize) -> &T {
-        unsafe { &*self.values[index] }
-    }
-
-    pub fn get_mut(&mut self, index: usize) -> &mut T {
-        unsafe { &mut *self.values[index] }
-    }
+    // pub fn try_get(&self, index: usize) -> Option<&T> {
+    //     self.values.get(index).map(|&v| unsafe { &*v })
+    // }
+    //
+    // pub fn try_get_mut(&mut self, index: usize) -> Option<&mut T> {
+    //     self.values.get_mut(index).map(|&mut v| unsafe { &mut *v })
+    // }
+    //
+    // pub fn get(&self, index: usize) -> &T {
+    //     unsafe { &*self.values[index] }
+    // }
+    //
+    // pub fn get_mut(&mut self, index: usize) -> &mut T {
+    //     unsafe { &mut *self.values[index] }
+    // }
 
     pub fn iter<'a>(&'a self) -> impl ExactSizeIterator<Item = &'a T> + 'a {
         self.values.iter().map(|&v| unsafe { &*v })
     }
 
-    pub fn iter_mut<'a>(&'a mut self) -> impl ExactSizeIterator<Item = &'a mut T> + 'a {
-        self.values.iter_mut().map(|&mut v| unsafe { &mut *v })
-    }
+    // pub fn iter_mut<'a>(&'a mut self) -> impl ExactSizeIterator<Item = &'a mut T> + 'a {
+    //     self.values.iter_mut().map(|&mut v| unsafe { &mut *v })
+    // }
 
     pub fn clear(&mut self) {
         for value in self.values.drain(..) {
@@ -83,9 +83,9 @@ pub fn unwrap_display<T, E: fmt::Display>(value: Result<T, E>) -> T {
 
 // === Formatting === //
 
-pub fn format_closure(f: impl Fn(&mut fmt::Formatter) -> fmt::Result) -> String {
-    format!("{}", FormatterFn(f))
-}
+// pub fn format_closure(f: impl Fn(&mut fmt::Formatter) -> fmt::Result) -> String {
+//     format!("{}", FormatterFn(f))
+// }
 
 #[derive(Debug, Copy, Clone)]
 pub struct FormatterFn<F>(pub F);

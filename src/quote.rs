@@ -1,3 +1,7 @@
+use crate::token::{GroupMargin, Token};
+
+// === rote! macro === //
+
 #[doc(hidden)]
 pub mod macro_internals {
     use crate::token::{GroupMargin, Token, TokenGroup, TokenSpacing};
@@ -81,13 +85,11 @@ pub mod macro_internals {
             let delta_line = line.checked_sub(self.last_line).expect(BACKWARDS_ERR);
 
             if delta_line > 0 {
-                self.group
-                    .push_token_raw(TokenSpacing::new(delta_line, column));
+                self.group.push_raw(TokenSpacing::new(delta_line, column));
             } else {
                 let delta_column = column.checked_sub(self.last_column).expect(BACKWARDS_ERR);
                 if delta_column > 0 {
-                    self.group
-                        .push_token_raw(TokenSpacing::new_spaces(delta_column));
+                    self.group.push_raw(TokenSpacing::new_spaces(delta_column));
                 }
             }
 
@@ -95,7 +97,7 @@ pub mod macro_internals {
         }
 
         pub fn with_token(mut self, token: impl Into<Token>) -> Self {
-            self.group.push_token_raw(token.into());
+            self.group.push_raw(token.into());
             self
         }
 
@@ -136,3 +138,14 @@ pub mod macro_internals {
 }
 
 pub use rote_macros::rote;
+
+// === Construction helpers === //
+
+pub fn debug_show_margin() -> Token {
+    rote! {
+        $$<debug_show_margin>
+        <- the margin is here!
+    }
+    .with_margin(GroupMargin::AT_MARGIN)
+    .to_token()
+}
