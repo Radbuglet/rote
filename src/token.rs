@@ -1664,14 +1664,6 @@ impl Token {
     }
 }
 
-impl fmt::Display for Token {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        let mut buffer = String::new();
-        self.display(&mut buffer, 0);
-        f.write_str(&buffer)
-    }
-}
-
 impl TokenGroup {
     // TODO: Merge this implementation with the group formatter's implementation to avoid character
     //  counting inconsistencies.
@@ -1823,3 +1815,26 @@ impl TokenDirective {
         write!(buffer, "${:?}", self.data()).unwrap();
     }
 }
+
+macro_rules! impl_display {
+	($($ty:ty),*$(,)?) => {$(
+		impl fmt::Display for $ty {
+			fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+				let mut buffer = String::new();
+				self.display(&mut buffer, 0);
+				f.write_str(&buffer)
+			}
+		}
+	)*};
+}
+
+impl_display!(
+    Token,
+    TokenGroup,
+    TokenIdent,
+    TokenPunct,
+    TokenLiteral,
+    TokenComment,
+    TokenSpacing,
+    TokenDirective,
+);
