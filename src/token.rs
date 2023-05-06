@@ -2,6 +2,7 @@ use std::{
     any::{Any, TypeId},
     borrow::Cow,
     fmt::{self, Debug, Write},
+    mem,
     sync::Arc,
 };
 
@@ -129,11 +130,22 @@ impl_token_to_instance_conversions!(
 #[derive(Debug, Clone)]
 pub struct TokenGroup {
     delimiter: GroupDelimiter,
+
+    // The margin indicates the space present in front of each newline. The margin level must
+    // strictly increase with each group nesting. See [`GroupMargin`] documentation for more
+    // details on the semantics of each mode.
     margin: GroupMargin,
+
+    // Head spacing denotes the space between the left-most margin and the first actual token
+    // contained in the group. The actual number of spaces inserted, therefore, depends upon the
+    // actual delimiter chosen.
     head_spacing: u32,
     head_spacing_visible: bool,
-    is_normalized: bool,
+
+    // To reduce the cost of a clone operation, groups are stored in an `Arc` and given `Cow`
+    // semantics.
     tokens: Arc<Vec<Token>>,
+    is_normalized: bool,
 }
 
 impl TokenGroup {
@@ -278,12 +290,17 @@ impl GroupDelimiter {
     }
 }
 
-// TODO: Be more specific about the nesting rules of groups. In particular, make sure that margins
-// cannot decrease between groups.
 #[derive(Debug, Copy, Clone, Hash, Eq, PartialEq)]
 pub enum GroupMargin {
+    // Line-relative margins are relative to the left of the first non-whitespace character on the
+    // currently-printed line.
     RelativeToLineStart(i32),
+
+    // Cursor-relative margins are measured relative to the left side of the first location inside
+    // the group.
     RelativeToCursor(i32),
+
+    // Margin-relative margins are relative to the parent margin setting. It's as shrimple as that.
     RelativeToMargin(i32),
 }
 
@@ -298,56 +315,127 @@ impl GroupMargin {
 // === TokenGroup Normalization === //
 
 impl TokenGroup {
+    // This method enforces the following invariants:
+    //
+    // - Pure white-spaces are only produced by a single isolated `Spacing` token.
+    //   - This implies that trailing whitespace is impossible to produce in a normalized stream.
+    // - Virtual groups are flattened into their equivalent token sequence.
+    // - There are no zero-sized tokens.
+    // - Identifiers are combined into single valid identifiers.
+    // - Identifiers and literals can never be glued to one another.
+    //
     pub fn push_token_normalized_inner(tokens: &mut Vec<Token>, token: impl Into<Token>) {
-        // This method enforces the following invariants:
-        //
-        // - Pure white-spaces are only produced by a single isolated `Spacing` token.
-        //   - This implies that trailing whitespace is impossible to produce in a normalized stream.
-        // - Virtual groups are flattened into their equivalent token sequence.
-        // - There are no zero-sized tokens.
-        // - Identifiers are combined into single valid identifiers.
-        // - Identifiers and literals can never be glued to one another.
-        //
-
         match token.into() {
             Token::Group(mut group) => {
                 group.normalize();
 
+                // Transform visible head spaces into regular spaces
+                if let Some(head_spacing) = group.head_spacing_size() {
+                    group.set_head_spacing_visible(false);
+                    Self::push_token_normalized_inner(
+                        tokens,
+                        TokenSpacing::new_spaces(head_spacing),
+                    );
+                }
+
+                // If the delimiter is virtual, merge its contents into the stream directly.
                 if group.delimiter() == GroupDelimiter::Virtual {
-                    // If the group is virtual, we need to inline the group tokens.
-
-                    // Generate stats about the last line of this group when displayed with zero
-                    // leading margin.
-                    let (cursor_pos, line_start_pos) = {
+                    // Compute the group's internal margin
+                    let cursor_info = Self::compute_line_margin_info({
                         let mut tokens = tokens.iter().rev();
-                        compute_line_margin_info(|tmp| {
-                            let token = tokens.next()?;
-                            token.display(tmp, 0);
-                            Some(tmp)
-                        })
-                    };
-
-                    // Determine the relative margin for tokens in this group.
-                    let margin = match group.margin() {
-                        GroupMargin::RelativeToLineStart(rel) => {
-                            line_start_pos.saturating_add_signed(rel)
+                        move |tmp| {
+                            tokens.next().map(|token| {
+                                token.display(tmp, 0);
+                                tmp.as_str()
+                            })
                         }
-                        GroupMargin::RelativeToCursor(rel) => cursor_pos.saturating_add_signed(rel),
-                        GroupMargin::RelativeToMargin(rel) => rel as u32,
-                    };
+                    });
+                    let margin = group.compute_inner_margin(0, cursor_info);
 
-                    // TODO
+                    // Dump the inner tokens into the stream, adjusting spaces where necessary.
+                    for mut token in group.tokens().iter().cloned() {
+                        if let Some(spacing) = token.as_spacing_mut() {
+                            if spacing.lines() > 0 {
+                                spacing.set_spaces(spacing.spaces() + margin);
+                            }
+                        }
+
+                        Self::push_token_normalized_inner(tokens, token);
+                    }
                 } else {
                     // Otherwise, add the group in directly.
                     tokens.push(group.into());
                 }
             }
-            Token::Ident(_) => todo!(),
-            Token::Punct(_) => todo!(),
-            Token::Literal(_) => todo!(),
-            Token::Comment(_) => todo!(),
-            Token::Spacing(_) => todo!(),
-            Token::Directive(_) => todo!(),
+            Token::Ident(ident) => {
+                // Ignore empty identifiers
+                if ident.is_empty() {
+                    return;
+                }
+
+                // Otherwise, try to combine them with the previous identifier.
+                match tokens.last_mut() {
+                    Some(Token::Ident(prev)) => {
+                        // Combine with the previous identifier
+                        prev.ident_mut().push_str(ident.ident());
+                    }
+                    Some(Token::Literal(lit)) => {
+                        panic!("Identifier {ident:?} cannot be placed immediately after literal {lit:?}.");
+                    }
+                    _ => {
+                        tokens.push(ident.into());
+                    }
+                }
+            }
+            Token::Punct(punct) => {
+                // Punctuations are subject to no additional normalization: because `'` and `"` are
+                // not valid punctuation characters, there is no risk of unintuitive duplicate
+                // representations.
+                tokens.push(punct.into());
+            }
+            Token::Literal(lit) => {
+                // Ensure that the literal does not come immediately after an identifier or another
+                // literal.
+                match tokens.last() {
+                    Some(Token::Ident(ident)) => {
+                        panic!("Literal {lit:?} cannot be placed immediately after an identifier {ident:?}.");
+                    }
+                    Some(Token::Literal(prev)) => {
+                        panic!("Literal {lit:?} cannot be placed immediately after another literal {prev:?}.");
+                    }
+                    // Otherwise, add the token
+                    _ => {
+                        tokens.push(lit.into());
+                    }
+                }
+            }
+            Token::Comment(comment) => {
+                // Comments are subject to no additional normalization.
+                tokens.push(comment.into());
+            }
+            Token::Spacing(spacing) => {
+                // Ignore empty spacings.
+                if spacing.is_empty() {
+                    return;
+                }
+
+                // Spaces are merged with previous spaces.
+                if let Some(Token::Spacing(prev)) = tokens.last_mut() {
+                    if spacing.lines() > 0 {
+                        prev.set_lines(prev.lines() + spacing.lines());
+                        prev.set_spaces(spacing.spaces());
+                    } else {
+                        prev.set_spaces(prev.spaces() + spacing.spaces());
+                    }
+                } else {
+                    // But otherwise left alone.
+                    tokens.push(spacing.into());
+                }
+            }
+            Token::Directive(directive) => {
+                // Directives are subject to no additional normalization.
+                tokens.push(directive.into());
+            }
         }
     }
 
@@ -376,16 +464,29 @@ impl TokenGroup {
         self
     }
 
+    // TODO: Optimize
     pub fn normalize(&mut self) -> &mut Self {
         if self.is_normalized {
             return self;
         }
 
-        todo!()
+        self.is_normalized = true;
+
+        let old_tokens = mem::replace(&mut self.tokens, Arc::new(Vec::new()));
+        let new_tokens = Arc::get_mut(&mut self.tokens).unwrap();
+
+        for token in old_tokens.iter() {
+            Self::push_token_normalized_inner(new_tokens, token.clone());
+        }
+
+        self
     }
 
+    // TODO: Optimize
     pub fn clone_normalized(&self) -> Self {
-        todo!()
+        let mut cloned = self.clone();
+        cloned.normalize();
+        cloned
     }
 }
 
@@ -1423,6 +1524,10 @@ impl TokenSpacing {
     pub fn set_spaces(&mut self, count: u32) {
         self.spaces = count;
     }
+
+    pub fn is_empty(&self) -> bool {
+        self.spaces == 0 && self.lines == 0
+    }
 }
 
 // === TokenDirective === //
@@ -1562,29 +1667,107 @@ impl fmt::Display for Token {
 }
 
 impl TokenGroup {
+    // TODO: Merge this implementation with the group formatter's implementation to avoid character
+    //  counting inconsistencies.
+    fn compute_line_margin_info(
+        mut next_fragment: impl FnMut(&mut String) -> Option<&str>,
+    ) -> (u32, u32) {
+        let mut char_count = 0u32;
+        let mut accumulated_space_count = 0u32;
+        let mut tmp = String::new();
+
+        while let Some(fragment) = next_fragment(&mut tmp) {
+            // Find the last line in this fragment.
+            let (line_idx, line_text) = fragment
+                // Unlike `.lines()`, `.split()` contains a trailing line. It also
+                // contains `\r` but we don't worry about any lines besides the last
+                // one anyways so that isn't too big of a deal.
+                .split("\n")
+                .enumerate()
+                .last()
+                // N.B. After normalization, there should never be a token resolving to
+                // an empty character sequence. Hence, this should always return a
+                // "line."
+                .unwrap();
+
+            // For every character, going from left to right...
+            let mut local_space_count = 0;
+            let mut matching_spaces = true;
+
+            for char in line_text.chars() {
+                // Increment the total character counter
+                char_count += 1;
+
+                // If we're still matching spaces...
+                if matching_spaces {
+                    // Increment the space counter if applicable
+                    if char.is_whitespace() {
+                        local_space_count += 1;
+                    } else {
+                        // If we reached the end of the whitespace section before the
+                        // end of the fragment, set the accumulated space count to zero.
+                        accumulated_space_count = 0;
+                        matching_spaces = false;
+                    }
+                }
+            }
+
+            // Add the `local_space_count` to the `accumulated_space_count`. If we
+            // found a non-whitespace character in our fragment, the accumulated
+            // space count will be zero and will thus correctly reflect the fact
+            // that only the most recent fragment has contributed white-spaces.
+            accumulated_space_count += local_space_count;
+
+            // If the `line_idx` is not zero, we know that our sequence contained `\n`,
+            // telling us that we're done processing the line.
+            if line_idx != 0 {
+                break;
+            }
+
+            // If we're not breaking, clear the temporary buffer.
+            tmp.clear();
+        }
+
+        (char_count, accumulated_space_count)
+    }
+
+    fn compute_inner_margin(
+        &self,
+        base_margin: u32,
+        (cursor_pos, line_start_pos): (u32, u32),
+    ) -> u32 {
+        match self.margin() {
+            GroupMargin::RelativeToLineStart(rel) => line_start_pos.saturating_add_signed(rel),
+            GroupMargin::RelativeToCursor(rel) => cursor_pos.saturating_add_signed(rel),
+            GroupMargin::RelativeToMargin(rel) => base_margin.saturating_add_signed(rel),
+        }
+    }
+
+    fn head_spacing_size(&self) -> Option<u32> {
+        if self.head_spacing_visible() {
+            Some(self.head_spacing() - self.delimiter.open_char().len() as u32)
+        } else {
+            None
+        }
+    }
+
     fn display(&self, buffer: &mut String, margin: u32) {
         // Push the delimiter
-        if self.head_spacing_visible() {
-            buffer.extend(
-                (0..(self.head_spacing() - self.delimiter.open_char().len() as u32)).map(|_| ' '),
-            );
+        if let Some(head_spacing) = self.head_spacing_size() {
+            buffer.extend((0..head_spacing).map(|_| ' '));
         }
 
         buffer.push_str(self.delimiter().open_char());
 
         // Determine the margin for the line
-        let curr_line = buffer.lines().last().unwrap_or("");
-        let margin = match self.margin() {
-            GroupMargin::RelativeToLineStart(rel) => {
-                let margin = curr_line.chars().take_while(|c| c.is_whitespace()).count() as u32;
-                margin.saturating_add_signed(rel)
-            }
-            GroupMargin::RelativeToCursor(rel) => {
-                let margin = curr_line.len() as u32;
-                margin.saturating_add_signed(rel)
-            }
-            GroupMargin::RelativeToMargin(rel) => margin.saturating_add_signed(rel),
-        };
+        let last_line = buffer.lines().last().unwrap_or("");
+        let margin = self.compute_inner_margin(
+            margin,
+            (
+                last_line.len() as u32,
+                last_line.chars().take_while(|c| c.is_whitespace()).count() as u32,
+            ),
+        );
 
         for token in self.tokens() {
             token.display(buffer, margin);
@@ -1642,67 +1825,4 @@ pub fn debug_show_margin() -> Token {
     }
     .with_margin(GroupMargin::AT_MARGIN)
     .to_token()
-}
-
-// TODO: Merge this implementation with the group formatter's implementation to avoid inconsistencies.
-fn compute_line_margin_info(
-    mut next_fragment: impl FnMut(&mut String) -> Option<&str>,
-) -> (u32, u32) {
-    let mut char_count = 0u32;
-    let mut accumulated_space_count = 0u32;
-    let mut tmp = String::new();
-
-    while let Some(fragment) = next_fragment(&mut tmp) {
-        // Find the last line in this fragment.
-        let (line_idx, line_text) = fragment
-            // Unlike `.lines()`, `.split()` contains a trailing line. It also
-            // contains `\r` but we don't worry about any lines besides the last
-            // one anyways so that isn't too big of a deal.
-            .split("\n")
-            .enumerate()
-            .last()
-            // N.B. After normalization, there should never be a token resolving to
-            // an empty character sequence. Hence, this should always return a
-            // "line."
-            .unwrap();
-
-        // For every character, going from left to right...
-        let mut local_space_count = 0;
-        let mut matching_spaces = true;
-
-        for char in line_text.chars() {
-            // Increment the total character counter
-            char_count += 1;
-
-            // If we're still matching spaces...
-            if matching_spaces {
-                // Increment the space counter if applicable
-                if char.is_whitespace() {
-                    local_space_count += 1;
-                } else {
-                    // If we reached the end of the whitespace section before the
-                    // end of the fragment, set the accumulated space count to zero.
-                    accumulated_space_count = 0;
-                    matching_spaces = false;
-                }
-            }
-        }
-
-        // Add the `local_space_count` to the `accumulated_space_count`. If we
-        // found a non-whitespace character in our fragment, the accumulated
-        // space count will be zero and will thus correctly reflect the fact
-        // that only the most recent fragment has contributed white-spaces.
-        accumulated_space_count += local_space_count;
-
-        // If the `line_idx` is not zero, we know that our sequence contained `\n`,
-        // telling us that we're done processing the line.
-        if line_idx != 0 {
-            break;
-        }
-
-        // If we're not breaking, clear the temporary buffer.
-        tmp.clear();
-    }
-
-    (char_count, accumulated_space_count)
 }

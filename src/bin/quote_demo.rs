@@ -25,6 +25,7 @@ fn main() {
             }
             margin
         }
+        .clone_normalized()
         .to_token())
     );
 }
