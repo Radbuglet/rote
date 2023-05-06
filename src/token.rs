@@ -294,8 +294,8 @@ pub enum GroupMargin {
     // currently-printed line.
     RelativeToLineStart(i32),
 
-    // Cursor-relative margins are measured relative to the left side of the first location inside
-    // the group.
+    // Cursor-relative margins are measured relative to the left side of the location right before
+    // the group is printed.
     RelativeToCursor(i32),
 
     // Margin-relative margins are relative to the parent margin setting. It's as shrimple as that.
@@ -325,12 +325,6 @@ impl TokenGroup {
             Token::Group(mut group) => {
                 group.normalize();
 
-                // Transform visible head spaces into regular spaces
-                if let Some(head_spacing) = group.head_spacing_size() {
-                    group.set_head_spacing_visible(false);
-                    Self::push_normalized_inner(tokens, TokenSpacing::new_spaces(head_spacing));
-                }
-
                 // If the delimiter is virtual, merge its contents into the stream directly.
                 if group.delimiter() == GroupDelimiter::Virtual {
                     // Compute the group's internal margin
@@ -345,6 +339,12 @@ impl TokenGroup {
                     });
                     let margin = group.compute_inner_margin(0, cursor_info);
 
+                    // Transform visible head spaces into regular spaces
+                    if let Some(head_spacing) = group.head_spacing_size() {
+                        group.set_head_spacing_visible(false);
+                        Self::push_normalized_inner(tokens, TokenSpacing::new_spaces(head_spacing));
+                    }
+
                     // Dump the inner tokens into the stream, adjusting spaces where necessary.
                     for mut token in group.tokens().iter().cloned() {
                         if let Some(spacing) = token.as_spacing_mut() {
@@ -356,7 +356,13 @@ impl TokenGroup {
                         Self::push_normalized_inner(tokens, token);
                     }
                 } else {
-                    // Otherwise, add the group in directly.
+                    // Transform visible head spaces into regular spaces
+                    if let Some(head_spacing) = group.head_spacing_size() {
+                        group.set_head_spacing_visible(false);
+                        Self::push_normalized_inner(tokens, TokenSpacing::new_spaces(head_spacing));
+                    }
+
+                    // And add the group in directly.
                     tokens.push(group.into());
                 }
             }
@@ -1748,13 +1754,6 @@ impl TokenGroup {
     }
 
     fn display(&self, buffer: &mut String, margin: u32) {
-        // Push the delimiter
-        if let Some(head_spacing) = self.head_spacing_size() {
-            buffer.extend((0..head_spacing).map(|_| ' '));
-        }
-
-        buffer.push_str(self.delimiter().open_char());
-
         // Determine the margin for the line
         let last_line = buffer.lines().last().unwrap_or("");
         let margin = self.compute_inner_margin(
@@ -1764,6 +1763,13 @@ impl TokenGroup {
                 last_line.chars().take_while(|c| c.is_whitespace()).count() as u32,
             ),
         );
+
+        // Push the delimiter
+        if let Some(head_spacing) = self.head_spacing_size() {
+            buffer.extend((0..head_spacing).map(|_| ' '));
+        }
+
+        buffer.push_str(self.delimiter().open_char());
 
         for token in self.tokens() {
             token.display(buffer, margin);
