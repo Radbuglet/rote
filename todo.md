@@ -2,11 +2,11 @@
 
 ## Internals
 
+- [x] Cursor-relative constructions break down if the origin line has expanded unexpectedly
+- [ ] Invariants and general whitespace semantics are not specified or validated
 - [ ] Multiline strings break everything
 - [ ] `Punct`s are not validated
-- [ ] Invariants are not specified or validated
 - [ ] Implementation of various format-adjacent systems isn't unified
-- [x] Cursor-relative constructions break down if the origin line has expanded unexpectedly
 - [ ] Cow implementation is suboptimal
 - [ ] We need unicode support in literals
 - [ ] We need support for comments

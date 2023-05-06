@@ -4,7 +4,7 @@ use rote::{
 };
 
 fn main() {
-    println!("{}", vector(3, CompTy::I32));
+    println!("===\n{}.", dbg!(fail_demo()));
 }
 
 #[derive(Debug, Copy, Clone, Hash, Eq, PartialEq)]
@@ -93,6 +93,17 @@ pub fn vector(N: usize, CompTy: CompTy) -> Token {
                 } }
             }
         }
+    }
+    .to_token()
+}
+
+#[allow(non_snake_case)]
+#[allow(unused_braces)]
+pub fn fail_demo() -> Token {
+    rote! {
+          whee
+        woo
+          whee
     }
     .to_token()
 }

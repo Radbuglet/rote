@@ -114,10 +114,20 @@ pub mod macro_internals {
             start_col: u32,
             mut group: TokenGroup,
         ) -> Self {
-            // We set the margin as if we were relative to the left of the file.
-            group.set_margin(GroupMargin::RelativeToMargin(
-                start_col - group.head_spacing(),
-            ));
+            // Determine the absolute location of the group's margin column relative to the left of
+            // the file. Because this is called by a macro, we assume that `head_spacing` has been
+            // defined to be relative to the margin.
+            let abs_margin_column = start_col - group.head_spacing();
+
+            // Set the group's margin to that. Because this group is managed, this will be updated
+            // later.
+            group.set_margin(GroupMargin::RelativeToMargin(abs_margin_column));
+
+            // Groups may need margins lower than we currently provide so we extend the `margin_column`
+            // here if needed.
+            if abs_margin_column < self.margin_column {
+                self.margin_column = abs_margin_column;
+            }
 
             self.push_managed(group);
             self
@@ -144,7 +154,8 @@ pub mod macro_internals {
                         // Let's adjust it!
                         Token::Spacing(spacing) => {
                             if spacing.lines() > 0 {
-                                // N.B. this never underflows.
+                                // N.B. this never underflows because `margin_column` is set to the
+                                // minimum newline `spaces` count.
                                 spacing.set_spaces(spacing.spaces() - self.margin_column);
                             }
                         }
@@ -152,7 +163,8 @@ pub mod macro_internals {
                         // Let's adjust it!
                         Token::Group(group) => {
                             if let GroupMargin::RelativeToMargin(old_rel) = group.margin() {
-                                // FIXME: Why does this underflow?
+                                // N.B. this also cannot underflow because we take the minimum margin
+                                // into account
                                 group.set_margin(GroupMargin::RelativeToMargin(
                                     old_rel - self.margin_column,
                                 ));
