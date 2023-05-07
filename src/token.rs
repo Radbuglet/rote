@@ -8,6 +8,19 @@ use std::{
 
 use unicode_xid::UnicodeXID;
 
+// === ToToken === //
+
+// Conversions
+pub trait ToToken: Sized {
+    fn to_token(self) -> Token;
+}
+
+impl<T: Clone + ToToken> ToToken for &'_ T {
+    fn to_token(self) -> Token {
+        self.clone().to_token()
+    }
+}
+
 // === Token === //
 
 #[derive(Debug, Clone)]
@@ -21,7 +34,12 @@ pub enum Token {
     Directive(TokenDirective),
 }
 
-// Conversions
+impl ToToken for Token {
+    fn to_token(self) -> Token {
+        self
+    }
+}
+
 macro_rules! impl_token_to_instance_conversions {
 	($({
 		to=$to_converter:ident,
@@ -40,6 +58,13 @@ macro_rules! impl_token_to_instance_conversions {
 			impl $ty {
 				pub fn to_token(self) -> Token {
 					self.into()
+				}
+			}
+
+			impl ToToken for $ty {
+				fn to_token(self) -> Token {
+					// Inherent impl takes priority during name resolution
+					self.to_token()
 				}
 			}
 		)*
@@ -149,35 +174,31 @@ pub struct TokenGroup {
 impl TokenGroup {
     // === Constructors === //
 
-    pub fn new(
-        delimiter: GroupDelimiter,
-        margin: GroupMargin,
-        tokens: impl IntoIterator<Item = Token>,
-    ) -> Self {
+    pub fn new(delimiter: GroupDelimiter, margin: GroupMargin) -> Self {
         Self {
             delimiter,
             margin,
             head_spacing: 0,
             head_spacing_visible: false,
             is_normalized: true,
-            tokens: Arc::new(Vec::from_iter(tokens)),
+            tokens: Arc::new(Vec::new()),
         }
     }
 
     pub fn new_virtual(margin: GroupMargin) -> Self {
-        Self::new(GroupDelimiter::Virtual, margin, [])
+        Self::new(GroupDelimiter::Virtual, margin)
     }
 
     pub fn new_bracket(margin: GroupMargin) -> Self {
-        Self::new(GroupDelimiter::Bracket, margin, [])
+        Self::new(GroupDelimiter::Bracket, margin)
     }
 
     pub fn new_brace(margin: GroupMargin) -> Self {
-        Self::new(GroupDelimiter::Brace, margin, [])
+        Self::new(GroupDelimiter::Brace, margin)
     }
 
     pub fn new_paren(margin: GroupMargin) -> Self {
-        Self::new(GroupDelimiter::Parenthesis, margin, [])
+        Self::new(GroupDelimiter::Parenthesis, margin)
     }
 
     // === Setters and Getters === //
@@ -242,14 +263,25 @@ impl TokenGroup {
         self.tokens_mut_no_invalidate()
     }
 
-    pub fn push_raw(&mut self, token: impl Into<Token>) {
+    pub fn push_raw(&mut self, token: impl ToToken) {
         self.is_normalized = false;
-        self.tokens_mut_raw().push(token.into());
+        self.tokens_mut_raw().push(token.to_token());
     }
 
-    pub fn with_raw(mut self, token: impl Into<Token>) -> Self {
+    pub fn extend_raw<T: ToToken>(&mut self, tokens: impl IntoIterator<Item = T>) {
+        self.is_normalized = false;
+        self.tokens_mut_raw()
+            .extend(tokens.into_iter().map(ToToken::to_token));
+    }
+
+    pub fn with_raw(mut self, token: impl ToToken) -> Self {
         self.is_normalized = false;
         self.push_raw(token);
+        self
+    }
+
+    pub fn with_many_raw<T: ToToken>(mut self, tokens: impl IntoIterator<Item = T>) -> Self {
+        self.extend_raw(tokens);
         self
     }
 
@@ -320,8 +352,8 @@ impl TokenGroup {
     // - Identifiers are combined into single valid identifiers.
     // - Identifiers and literals can never be glued to one another.
     //
-    pub fn push_normalized_inner(tokens: &mut Vec<Token>, token: impl Into<Token>) {
-        match token.into() {
+    pub fn push_normalized_inner(tokens: &mut Vec<Token>, token: impl ToToken) {
+        match token.to_token() {
             Token::Group(mut group) => {
                 group.normalize();
 
@@ -387,9 +419,7 @@ impl TokenGroup {
                 }
             }
             Token::Punct(punct) => {
-                // Punctuations are subject to no additional normalization: because `'` and `"` are
-                // not valid punctuation characters, there is no risk of unintuitive duplicate
-                // representations.
+                // TODO: Enforce additional validation for `'` puncts.
                 tokens.push(punct.into());
             }
             Token::Literal(lit) => {
@@ -438,7 +468,7 @@ impl TokenGroup {
         }
     }
 
-    pub fn push_normalized(&mut self, token: impl Into<Token>) {
+    pub fn push_normalized(&mut self, token: impl ToToken) {
         // This method enforces the following invariants:
         //
         // - Pure white-spaces are only produced by a single isolated `Spacing` token.
@@ -458,8 +488,19 @@ impl TokenGroup {
         Self::push_normalized_inner(tokens, token);
     }
 
-    pub fn with_normalized(mut self, token: impl Into<Token>) -> Self {
+    pub fn extend_normalized<T: ToToken>(&mut self, tokens: impl IntoIterator<Item = T>) {
+        for token in tokens {
+            self.push_normalized(token);
+        }
+    }
+
+    pub fn with_normalized(mut self, token: impl ToToken) -> Self {
         self.push_normalized(token);
+        self
+    }
+
+    pub fn with_many_normalized<T: ToToken>(mut self, tokens: impl IntoIterator<Item = T>) -> Self {
+        self.extend_normalized(tokens);
         self
     }
 
@@ -577,6 +618,11 @@ pub struct TokenPunct {
 
 impl TokenPunct {
     pub fn new(char: char) -> Self {
+        assert!(
+            Self::is_valid_punct_char(char),
+            "{char:?} is not a valid punctuation character"
+        );
+
         Self { char }
     }
 
@@ -586,6 +632,16 @@ impl TokenPunct {
 
     pub fn set_char(&mut self, char: char) {
         self.char = char;
+    }
+
+    pub fn is_valid_punct_char(char: char) -> bool {
+        // Copied from `proc_macro`.
+        const LEGAL_CHARS: &[char] = &[
+            '=', '<', '>', '!', '~', '+', '-', '*', '/', '%', '^', '&', '|', '@', '.', ',', ';',
+            ':', '#', '$', '?', '\'',
+        ];
+
+        LEGAL_CHARS.contains(&char)
     }
 }
 

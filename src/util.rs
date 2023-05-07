@@ -141,3 +141,61 @@ where
         Ok(())
     }
 }
+
+// // === `overload!` macro === //
+//
+// macro_rules! overload {
+//     (
+// 		$vis:vis impl $curr_name:ident {
+// 			$($curr_inner:tt)*
+// 		}
+// 	) => {
+// 		#[derive(Debug, Copy, Clone, Default)]
+// 		$vis struct $curr_name;
+//
+// 		impl $curr_name {
+// 			$($curr_inner)*
+// 		}
+//     };
+//     (
+// 		$vis:vis impl $curr_name:ident {
+// 			$($curr_inner:tt)*
+// 		}
+//
+// 		impl $next_name:ident {
+// 			$($next_inner:tt)*
+// 		}
+//
+// 		$($rest:tt)*
+// 	) => {
+//         #[derive(Debug, Copy, Clone, Default)]
+// 		$vis struct $curr_name;
+//
+// 		impl $curr_name {
+// 			$($curr_inner)*
+// 		}
+//
+// 		impl $crate::util::overload_inner::Deref for $curr_name {
+// 			type Target = $next_name;
+//
+// 			fn deref(&self) -> &Self::Target {
+// 				&$next_name
+// 			}
+// 		}
+//
+// 		$crate::util::overload! {
+// 			$vis impl $next_name {
+// 				$($next_inner)*
+// 			}
+//
+// 			$($rest)*
+// 		}
+//     };
+// }
+//
+// pub(crate) use overload;
+//
+// #[doc(hidden)]
+// pub mod overload_inner {
+//     pub use std::ops::Deref;
+// }

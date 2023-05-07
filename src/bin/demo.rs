@@ -1,10 +1,10 @@
 use rote::{
-    quote::rote,
-    token::{GroupMargin, Token, TokenGroup, TokenIdent, TokenPunct, TokenSpacing},
+    quote::{rote, TokenIterator},
+    token::{GroupMargin, Token, TokenIdent, TokenSpacing},
 };
 
 fn main() {
-    println!("===\n{}.", dbg!(fail_demo()));
+    println!("===\n{}.", dbg!(vector(4, CompTy::F64)));
 }
 
 #[derive(Debug, Copy, Clone, Hash, Eq, PartialEq)]
@@ -52,58 +52,28 @@ pub fn vector(N: usize, CompTy: CompTy) -> Token {
         } else {
             rote! { #[derive(Debug, Copy, Clone, Hash, Eq, PartialEq, Ord, PartialOrd, Default)] }
         }}
-        pub struct $${VecTy.clone()} {
-            $${{
-                let mut builder = TokenGroup::new_virtual(GroupMargin::AT_LINE);
-                for i in 0..N {
-                    builder.push_raw(rote! { pub $${TokenIdent::new(ALPHA[i])}: $${CompTy.display()}, });
-                    if i != N - 1 {
-                        builder.push_raw(TokenSpacing::NEWLINE);
-                    }
-                }
-
-                builder
-            }}
+        #[repr(C)]
+        pub struct $${&VecTy} {
+            $${(0..N)
+                .map(|i| rote! { pub $${TokenIdent::new(ALPHA[i])}: $${CompTy.display()}, })
+                .sep(TokenSpacing::NEWLINE)
+                .to_group(GroupMargin::AT_CURSOR)
+            }
         }
 
-        impl $${VecTy.clone()} {
-            pub const fn new($${
-                let mut builder = TokenGroup::new_virtual(GroupMargin::AT_CURSOR);
-                for i in 0..N {
-                    builder.push_raw(rote! { $${TokenIdent::new(ALPHA[i])}: $${CompTy.display()} });
-                    if i != N - 1 {
-                        builder.push_raw(TokenPunct::new(','));
-                        builder.push_raw(TokenSpacing::SPACE);
-                    }
-                }
-
-                builder
+        impl $${&VecTy} {
+            pub const fn new($${(0..N)
+                .map(|i| rote! { pub $${TokenIdent::new(ALPHA[i])}: $${CompTy.display()} })
+                .sep(rote! { , }.with_raw(TokenSpacing::SPACE))
+                .to_group(GroupMargin::AT_CURSOR)
             }) -> Self {
-                Self { $${
-                    let mut builder = TokenGroup::new_virtual(GroupMargin::AT_CURSOR);
-                    for i in 0..N {
-                        builder.push_raw(rote! { $${TokenIdent::new(ALPHA[i])} });
-                        if i != N - 1 {
-                            builder.push_raw(TokenPunct::new(','));
-                            builder.push_raw(TokenSpacing::SPACE);
-                        }
-                    }
-
-                    builder
+                Self { $${(0..N)
+                    .map(|i| TokenIdent::new(ALPHA[i]))
+                    .sep(rote! { , }.with_raw(TokenSpacing::SPACE))
+                    .to_group(GroupMargin::AT_CURSOR)
                 } }
             }
         }
-    }
-    .to_token()
-}
-
-#[allow(non_snake_case)]
-#[allow(unused_braces)]
-pub fn fail_demo() -> Token {
-    rote! {
-          whee
-        woo
-          whee
     }
     .to_token()
 }

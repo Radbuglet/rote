@@ -1,10 +1,10 @@
-use crate::token::{GroupMargin, Token};
+use crate::token::{GroupMargin, ToToken, Token, TokenGroup};
 
 // === rote! macro === //
 
 #[doc(hidden)]
 pub mod macro_internals {
-    use crate::token::{GroupMargin, Token, TokenGroup, TokenSpacing};
+    use crate::token::{GroupMargin, ToToken, Token, TokenGroup, TokenSpacing};
 
     // === Re-exports === //
 
@@ -30,7 +30,7 @@ pub mod macro_internals {
                 group: {
                     // `AT_CURSOR` is just a sensible default which users can easily overwrite if
                     // need be. In particular, the macro replaces this with a margin-relative margin.
-                    let mut group = TokenGroup::new(delimiter, GroupMargin::AT_CURSOR, []);
+                    let mut group = TokenGroup::new(delimiter, GroupMargin::AT_CURSOR);
                     if delimiter == GroupDelimiter::Virtual {
                         // Our delimiter is `Virtual` *iff* we are called on the root-most group of a
                         // `rote!` invocation. In these cases, we always want to ensure that the
@@ -98,12 +98,12 @@ pub mod macro_internals {
             self
         }
 
-        pub fn with_token(mut self, token: impl Into<Token>) -> Self {
-            self.group.push_raw(token.into());
+        pub fn with_token(mut self, token: impl ToToken) -> Self {
+            self.group.push_raw(token.to_token());
             self
         }
 
-        pub fn push_managed(&mut self, token: impl Into<Token>) {
+        pub fn push_managed(&mut self, token: impl ToToken) {
             self.needs_update.push(self.group.tokens().len());
             self.group.push_raw(token);
         }
@@ -191,4 +191,64 @@ pub fn debug_show_margin() -> Token {
     }
     .with_margin(GroupMargin::AT_MARGIN)
     .to_token()
+}
+
+pub trait TokenIterator: Iterator<Item = Self::TokenItem> {
+    type TokenItem: ToToken;
+
+    fn next_token(&mut self) -> Option<Token> {
+        self.next().map(ToToken::to_token)
+    }
+
+    fn sep(self, sep: impl ToToken) -> TokenIterSep<Self>
+    where
+        Self: Sized,
+    {
+        TokenIterSep {
+            iter: self,
+            sep: sep.to_token(),
+            first: true,
+        }
+    }
+
+    fn to_group(self, margin: GroupMargin) -> TokenGroup
+    where
+        Self: Sized,
+    {
+        TokenGroup::new_virtual(margin).with_many_raw(self)
+    }
+}
+
+impl<T: ?Sized + Iterator> TokenIterator for T
+where
+    T::Item: ToToken,
+{
+    type TokenItem = T::Item;
+}
+
+#[derive(Debug, Clone)]
+pub struct TokenIterSep<I> {
+    iter: I,
+    sep: Token,
+    first: bool,
+}
+
+impl<I: TokenIterator> Iterator for TokenIterSep<I> {
+    type Item = Token;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        let next = self.iter.next_token()?;
+
+        if self.first {
+            self.first = false;
+            Some(next)
+        } else {
+            Some(
+                TokenGroup::new_virtual(GroupMargin::AT_MARGIN)
+                    .with_raw(&self.sep)
+                    .with_raw(next)
+                    .to_token(),
+            )
+        }
+    }
 }
