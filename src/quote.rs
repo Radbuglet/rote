@@ -1,9 +1,5 @@
-use crate::token::{GroupMargin, ToToken, Token, TokenGroup};
-
-// === rote! macro === //
-
 #[doc(hidden)]
-pub mod macro_internals {
+pub mod quote_macro_internals {
     use crate::token::{GroupMargin, ToToken, Token, TokenGroup, TokenSpacing};
 
     // === Re-exports === //
@@ -29,11 +25,12 @@ pub mod macro_internals {
             Self {
                 group: {
                     // `AT_CURSOR` is just a sensible default which users can easily overwrite if
-                    // need be. In particular, the macro replaces this with a margin-relative margin.
+                    // need be. In particular, the macro replaces this with a margin-relative margin
+                    // if the group is a literal group embedded in a parent group builder.
                     let mut group = TokenGroup::new(delimiter, GroupMargin::AT_CURSOR);
                     if delimiter == GroupDelimiter::Virtual {
                         // Our delimiter is `Virtual` *iff* we are called on the root-most group of a
-                        // `rote!` invocation. In these cases, we always want to ensure that the
+                        // `wrote!` invocation. In these cases, we always want to ensure that the
                         // spacing between the margin and the first token is actually visible, since
                         // this is part of the block.
                         group.set_head_spacing_visible(true);
@@ -82,7 +79,7 @@ pub mod macro_internals {
             // Insert relative cursor spacing
             const BACKWARDS_ERR: &'static str =
                 "The location of the token being quoted has seem to have gone backwards. \
-                 Is `rote!` mixing spans?";
+                 Is `wrote!` mixing spans?";
 
             let delta_line = line.checked_sub(self.last_line).expect(BACKWARDS_ERR);
 
@@ -180,75 +177,4 @@ pub mod macro_internals {
     }
 }
 
-pub use rote_macros::rote;
-
-// === Construction helpers === //
-
-pub fn debug_show_margin() -> Token {
-    rote! {
-        $$<debug_show_margin>
-        <- the margin is here!
-    }
-    .with_margin(GroupMargin::AT_MARGIN)
-    .to_token()
-}
-
-pub trait TokenIterator: Iterator<Item = Self::TokenItem> {
-    type TokenItem: ToToken;
-
-    fn next_token(&mut self) -> Option<Token> {
-        self.next().map(ToToken::to_token)
-    }
-
-    fn sep(self, sep: impl ToToken) -> TokenIterSep<Self>
-    where
-        Self: Sized,
-    {
-        TokenIterSep {
-            iter: self,
-            sep: sep.to_token(),
-            first: true,
-        }
-    }
-
-    fn to_group(self, margin: GroupMargin) -> TokenGroup
-    where
-        Self: Sized,
-    {
-        TokenGroup::new_virtual(margin).with_many_raw(self)
-    }
-}
-
-impl<T: ?Sized + Iterator> TokenIterator for T
-where
-    T::Item: ToToken,
-{
-    type TokenItem = T::Item;
-}
-
-#[derive(Debug, Clone)]
-pub struct TokenIterSep<I> {
-    iter: I,
-    sep: Token,
-    first: bool,
-}
-
-impl<I: TokenIterator> Iterator for TokenIterSep<I> {
-    type Item = Token;
-
-    fn next(&mut self) -> Option<Self::Item> {
-        let next = self.iter.next_token()?;
-
-        if self.first {
-            self.first = false;
-            Some(next)
-        } else {
-            Some(
-                TokenGroup::new_virtual(GroupMargin::AT_MARGIN)
-                    .with_raw(&self.sep)
-                    .with_raw(next)
-                    .to_token(),
-            )
-        }
-    }
-}
+pub use rote_macros::wrote;

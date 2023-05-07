@@ -1,0 +1,3 @@
+# Hard tab characters interfere with `wrote!`, which doesn't know how big a hard tab should be.
+hard_tabs = false
+tab_spaces = 4

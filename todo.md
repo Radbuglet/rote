@@ -6,7 +6,7 @@
 - [x] `Punct`s are not validated
 - [ ] `Punct` rules are not enforced during normalization
 - [ ] Make raw stream behavior more predictable (don't wrap everything in groups, for example)
-- [ ] Diagnostic spans for `rote!` are oftentimes incorrect
+- [ ] Diagnostic spans for `wrote!` are oftentimes incorrect
 - [ ] Comments are not yet supported
 - [ ] Identifiers should be equated through normalization
 - [ ] Multiline strings break everything
@@ -22,7 +22,7 @@
 
 - [x] Quoting is very verbose and needs automated conversions
 - [ ] Token stream insertion methods could be useful
-- [ ] `rote!` should support more ways of quoting that don't require a surrounding block
+- [ ] `wrote!` should support more ways of quoting that don't require a surrounding block
 - [ ] Literals need a way to be constructed and numeric literals need a simplified decoding interface.
 - [ ] Modules should be reorganized and a prelude for quoting should be exposed
 

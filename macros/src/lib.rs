@@ -3,8 +3,8 @@ use proc_macro2::{Delimiter, Group, Span, TokenStream, TokenTree};
 use quote::{quote, quote_spanned};
 
 #[proc_macro]
-pub fn rote(input: NativeTokenStream) -> NativeTokenStream {
-    let crate_ = quote!(::rote::quote::macro_internals);
+pub fn wrote(input: NativeTokenStream) -> NativeTokenStream {
+    let crate_ = quote!(::rote::quote_macro_internals);
     let mut output = make_group_builder(
         &crate_,
         input.into(),

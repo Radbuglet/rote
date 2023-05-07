@@ -6,6 +6,8 @@ use std::{
     sync::Arc,
 };
 
+use crate::wrote;
+
 use unicode_xid::UnicodeXID;
 
 // === ToToken === //
@@ -41,59 +43,59 @@ impl ToToken for Token {
 }
 
 macro_rules! impl_token_to_instance_conversions {
-	($({
-		to=$to_converter:ident,
-		as=$as_converter:ident,
-		as_mut=$as_mut_converter:ident,
-		variant=$variant:ident,
-		ty=$ty:ty,
-	},)*) => {
-		$(
-			impl From<$ty> for Token {
-				fn from(value: $ty) -> Self {
-					Self::$variant(value)
-				}
-			}
+    ($({
+        to=$to_converter:ident,
+        as=$as_converter:ident,
+        as_mut=$as_mut_converter:ident,
+        variant=$variant:ident,
+        ty=$ty:ty,
+    },)*) => {
+        $(
+            impl From<$ty> for Token {
+                fn from(value: $ty) -> Self {
+                    Self::$variant(value)
+                }
+            }
 
-			impl $ty {
-				pub fn to_token(self) -> Token {
-					self.into()
-				}
-			}
+            impl $ty {
+                pub fn to_token(self) -> Token {
+                    self.into()
+                }
+            }
 
-			impl ToToken for $ty {
-				fn to_token(self) -> Token {
-					// Inherent impl takes priority during name resolution
-					self.to_token()
-				}
-			}
-		)*
+            impl ToToken for $ty {
+                fn to_token(self) -> Token {
+                    // Inherent impl takes priority during name resolution
+                    self.to_token()
+                }
+            }
+        )*
 
-		impl Token {
-			$(
-				pub fn $to_converter(self) -> Option<$ty> {
-					match self {
-						Self::$variant(inner) => Some(inner),
-						_ => None,
-					}
-				}
+        impl Token {
+            $(
+                pub fn $to_converter(self) -> Option<$ty> {
+                    match self {
+                        Self::$variant(inner) => Some(inner),
+                        _ => None,
+                    }
+                }
 
-				pub fn $as_converter(&self) -> Option<&$ty> {
-					match self {
-						Self::$variant(inner) => Some(inner),
-						_ => None,
-					}
-				}
+                pub fn $as_converter(&self) -> Option<&$ty> {
+                    match self {
+                        Self::$variant(inner) => Some(inner),
+                        _ => None,
+                    }
+                }
 
-				pub fn $as_mut_converter(&mut self) -> Option<&mut $ty> {
-					match self {
-						Self::$variant(inner) => Some(inner),
-						_ => None,
-					}
-				}
-			)*
-		}
-	};
+                pub fn $as_mut_converter(&mut self) -> Option<&mut $ty> {
+                    match self {
+                        Self::$variant(inner) => Some(inner),
+                        _ => None,
+                    }
+                }
+            )*
+        }
+    };
 }
 
 impl_token_to_instance_conversions!(
@@ -330,15 +332,191 @@ impl GroupDelimiter {
 
 #[derive(Debug, Copy, Clone, Hash, Eq, PartialEq)]
 pub enum GroupMargin {
-    // Line-relative margins are relative to the left of the first non-whitespace character on the
-    // currently-printed line.
+    /// Line-relative margins are relative to the left of the first non-whitespace character on the
+    /// currently-printed line.
+    ///
+    /// ---
+    ///
+    /// As an example of a group with `GroupMargin::RelativeToLineStart(0)`, which can be equivalently
+    /// expressed using the [`GroupMargin::AT_LINE`] constant.
+    ///
+    /// ```plain_text
+    /// This is the left margin of the parent group.
+    ///     And this is the line containing the inner group: { Text on the first line is unaffected.
+    ///     ^ the start of the line is here
+    ///
+    ///     So a line with zero leading spacing would look like this.
+    ///         And a line with four leading spaces would look like this.
+    ///     } <-- the closing delimiter is also subject to the margin.
+    /// Text after the group reverts to its original margin.
+    /// ```
+    ///
+    /// The argument to the variant describes a relative offset from the base location. If the number
+    /// is positive, it indicates the number of additional spaces.
+    ///
+    /// As an example of a group with `GroupMargin::RelativeToLineStart(4)`:
+    ///
+    /// ```plain_text
+    /// This is the left margin of the parent group.
+    ///     And this is the line containing the inner group: { Text on the first line is unaffected.
+    ///     ^ the start of the line is here
+    ///         . <-- so the margin is here
+    ///
+    ///         Thus a line with zero leading spacing would look like this.
+    ///             And a line with four leading spaces would look like this.
+    ///         } <-- the closing delimiter is also subject to the margin.
+    /// Text after the group reverts to its original margin.
+    /// ```
+    ///
+    /// If it is negative, it indicates the number of spaces with which the margin is outdented.
+    /// Note, however, that outdenting past the parent group's margin will result in the text being
+    /// glued to the parent's margin.
+    ///
+    /// As an example of a group with `GroupMargin::RelativeToLineStart(-4)`:
+    ///
+    /// ```plain_text
+    /// This is the left margin of the parent group.
+    ///     And this is the line containing the inner group: { Text on the first line is unaffected.
+    ///     ^ the start of the line is here
+    /// . <-- so the margin is here
+    ///
+    /// Thus a line with zero leading spacing would look like this.
+    ///     And a line with four leading spaces would look like this.
+    /// } <-- the closing delimiter is also subject to the margin.
+    /// Text after the group reverts to its original margin.
+    /// ```
     RelativeToLineStart(i32),
 
-    // Cursor-relative margins are measured relative to the left side of the location right before
-    // the group is printed.
+    /// Cursor-relative margins are measured relative to the left side of the location right before
+    /// the group is printed.
+    ///
+    /// This is the default mode for the root-most group produced by [`wrote!`]. Child groups of the
+    /// root group use [`GroupMargin::RelativeToMargin`] instead.
+    ///
+    /// ---
+    ///
+    /// As an example of a group with `GroupMargin::RelativeToCursor(0)`, which can be equivalently
+    /// expressed using the [`GroupMargin::AT_CURSOR`] constant.
+    ///
+    /// ```plain_text
+    /// proceeding_text{ Text on the first line is unaffected.
+    ///                ^ start of group
+    ///
+    ///                . <-- Margin is defined here.
+    ///                So a line with zero leading spacing would look like this.
+    ///                    And a line with four leading spaces would look like this.
+    ///                } <-- the closing delimiter is also subject to the margin.
+    /// Text after the group reverts to its original margin.
+    /// ```
+    ///
+    /// The argument to the variant describes a relative offset from the base location. If the number
+    /// is positive, it indicates the number of additional spaces.
+    ///
+    /// As an example of a group with `GroupMargin::RelativeToCursor(4)`:
+    ///
+    /// ```plain_text
+    /// proceeding_text{ Text on the first line is unaffected.
+    ///                ^ start of group
+    ///                    . <-- Margin is defined here.
+    ///                    So a line with zero leading spacing would look like this.
+    ///                        And a line with four leading spaces would look like this.
+    ///                    } <-- the closing delimiter is also subject to the margin.
+    /// Text after the group reverts to its original margin.
+    /// ```
+    ///
+    /// If it is negative, it indicates the number of spaces with which the margin is outdented.
+    /// Note, however, that outdenting past the parent group's margin will result in the text being
+    /// glued to the parent's margin.
+    ///
+    /// As an example of a group with `GroupMargin::RelativeToCursor(-4)`:
+    ///
+    /// ```plain_text
+    /// proceeding_text{ Text on the first line is unaffected.
+    ///                ^ start of group
+    ///            . <-- Margin is defined here.
+    ///            So a line with zero leading spacing would look like this.
+    ///                And a line with four leading spaces would look like this.
+    ///            } <-- the closing delimiter is also subject to the margin.
+    /// Text after the group reverts to its original margin.
+    /// ```
     RelativeToCursor(i32),
 
-    // Margin-relative margins are relative to the parent margin setting. It's as shrimple as that.
+    /// Margin-relative margins are relative to the parent margin setting.
+    ///
+    /// [`GroupMargin::AT_MARGIN`], which is equivalent to `GroupMargin::RelativeToMargin(0)`, has a
+    /// no-op effect with respect to the group's margins. Thus, to create a purely organizational
+    /// group without any impact on the printing of its contents, one can use a [`Virtual`](GroupDelimiter::Virtual)
+    /// group with the `AT_MARGIN` margin mode.
+    ///
+    /// Inner groups produced by a [`wrote!`] macro invocation use this mode to ensure that the margins
+    /// of inner groups remain the same regardless of any additions to the line containing the
+    /// opening delimiter after the token has been constructed.
+    ///
+    /// ```plain_text
+    /// Some text here.
+    /// . <-- This is the margin of the root group
+    ///
+    ///     This is an example line ${some_spacing}: { The first line is, as always, unaffected.
+    ///     . <-- The macro detects this column as the minimum column of the group and aligns
+    ///           everything to it accordingly.
+    ///
+    /// ****| <-- Realizing that there is a four space gap between the margin column of the parent
+    ///           group and the margin column of the child, the macro specifies the group's margin as
+    ///           `GroupMargin::RelativeToMargin(4)`.
+    ///
+    ///     . <-- This is the margin of the child group after its parent has been printed.
+    ///           Hence, even if {some_spacing} resolves to something big that throws off the location
+    ///           of the opening brace, subsequent lines in the group will remain at the same location
+    ///           in the file.
+    ///
+    ///     This is a line with zero front spacing.
+    ///         This is a line with four spacing worth of front spacing.
+    ///
+    ///     } <-- The closing delimiter is, as always, subject to the same margin as the rest of the
+    ///           group.
+    /// ```
+    ///
+    /// ---
+    ///
+    /// As an example of a group with `GroupMargin::RelativeToMargin(0)`, which can be equivalently
+    /// expressed using the [`GroupMargin::AT_MARGIN`] constant:
+    ///
+    /// ```plain_text
+    /// . <-- This group's margin is here.
+    ///
+    /// Now, we define a child group and give it the margin `RelativeToMargin(0)`:
+    ///                { Text on the first line is unaffected.
+    ///                ^ this opening delimiter is intended quite a ways in.
+    ///
+    /// . <-- However, because the parent margin was specified here, we inherit the parent margin.
+    ///
+    /// This is a line with zero front spacing.
+    ///     This is a line with four spacing worth of front spacing.
+    ///
+    /// } <-- the closing delimiter is also subject to the margin.
+    /// ```
+    ///
+    /// The argument to the variant describes a relative offset from the base location. Unlike other
+    /// margin settings, this parameter is an unsigned positive number because it is never valid for
+    /// margins to decrease from parent group to child group.
+    ///
+    /// As an example of a group with `GroupMargin::RelativeToMargin(4)`:
+    ///
+    /// ```plain_text
+    /// . <-- This group's margin is here.
+    ///
+    /// Now, we define a child group and give it the margin `RelativeToMargin(4)`:
+    ///                { Text on the first line is unaffected.
+    ///                ^ this opening delimiter is intended quite a ways in.
+    ///
+    ///     . <-- Because the parent margin was specified at the gutter, we inherit the parent margin
+    ///           plus four additional spaces
+    ///
+    ///     This is a line with zero front spacing.
+    ///         This is a line with four spacing worth of front spacing.
+    ///
+    ///     } <-- the closing delimiter is also subject to the margin.
+    /// ```
     RelativeToMargin(u32),
 }
 
@@ -605,8 +783,8 @@ impl TokenIdent {
 
         // Ensure that the first character is either missing or is an `xid_start`.
         text.next().map_or(true, |c| c.is_xid_start()) &&
-			// Ensure that all subsequent characters are `xid_continue`.
-			text.all(|c| c.is_xid_continue())
+            // Ensure that all subsequent characters are `xid_continue`.
+            text.all(|c| c.is_xid_continue())
     }
 
     fn assert_possibly_valid(text: Cow<'static, str>) -> Cow<'static, str> {
@@ -1876,15 +2054,15 @@ impl TokenDirective {
 }
 
 macro_rules! impl_display {
-	($($ty:ty),*$(,)?) => {$(
-		impl fmt::Display for $ty {
-			fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-				let mut buffer = String::new();
-				self.display(&mut buffer, 0);
-				f.write_str(&buffer)
-			}
-		}
-	)*};
+    ($($ty:ty),*$(,)?) => {$(
+        impl fmt::Display for $ty {
+            fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+                let mut buffer = String::new();
+                self.display(&mut buffer, 0);
+                f.write_str(&buffer)
+            }
+        }
+    )*};
 }
 
 impl_display!(
@@ -1897,3 +2075,74 @@ impl_display!(
     TokenSpacing,
     TokenDirective,
 );
+
+// === Construction helpers === //
+
+pub fn debug_show_margin() -> Token {
+    wrote! {
+        $$<debug_show_margin>
+        <- the margin is here!
+    }
+    .with_margin(GroupMargin::AT_MARGIN)
+    .to_token()
+}
+
+pub trait TokenIterator: Iterator<Item = Self::TokenItem> {
+    type TokenItem: ToToken;
+
+    fn next_token(&mut self) -> Option<Token> {
+        self.next().map(ToToken::to_token)
+    }
+
+    fn sep(self, sep: impl ToToken) -> TokenIterSep<Self>
+    where
+        Self: Sized,
+    {
+        TokenIterSep {
+            iter: self,
+            sep: sep.to_token(),
+            first: true,
+        }
+    }
+
+    fn to_group(self, margin: GroupMargin) -> TokenGroup
+    where
+        Self: Sized,
+    {
+        TokenGroup::new_virtual(margin).with_many_raw(self)
+    }
+}
+
+impl<T: ?Sized + Iterator> TokenIterator for T
+where
+    T::Item: ToToken,
+{
+    type TokenItem = T::Item;
+}
+
+#[derive(Debug, Clone)]
+pub struct TokenIterSep<I> {
+    iter: I,
+    sep: Token,
+    first: bool,
+}
+
+impl<I: TokenIterator> Iterator for TokenIterSep<I> {
+    type Item = Token;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        let next = self.iter.next_token()?;
+
+        if self.first {
+            self.first = false;
+            Some(next)
+        } else {
+            Some(
+                TokenGroup::new_virtual(GroupMargin::AT_MARGIN)
+                    .with_raw(&self.sep)
+                    .with_raw(next)
+                    .to_token(),
+            )
+        }
+    }
+}

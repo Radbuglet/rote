@@ -146,50 +146,50 @@ where
 //
 // macro_rules! overload {
 //     (
-// 		$vis:vis impl $curr_name:ident {
-// 			$($curr_inner:tt)*
-// 		}
-// 	) => {
-// 		#[derive(Debug, Copy, Clone, Default)]
-// 		$vis struct $curr_name;
+//         $vis:vis impl $curr_name:ident {
+//             $($curr_inner:tt)*
+//         }
+//     ) => {
+//         #[derive(Debug, Copy, Clone, Default)]
+//         $vis struct $curr_name;
 //
-// 		impl $curr_name {
-// 			$($curr_inner)*
-// 		}
+//         impl $curr_name {
+//             $($curr_inner)*
+//         }
 //     };
 //     (
-// 		$vis:vis impl $curr_name:ident {
-// 			$($curr_inner:tt)*
-// 		}
+//         $vis:vis impl $curr_name:ident {
+//             $($curr_inner:tt)*
+//         }
 //
-// 		impl $next_name:ident {
-// 			$($next_inner:tt)*
-// 		}
+//         impl $next_name:ident {
+//             $($next_inner:tt)*
+//         }
 //
-// 		$($rest:tt)*
-// 	) => {
+//         $($rest:tt)*
+//     ) => {
 //         #[derive(Debug, Copy, Clone, Default)]
-// 		$vis struct $curr_name;
+//         $vis struct $curr_name;
 //
-// 		impl $curr_name {
-// 			$($curr_inner)*
-// 		}
+//         impl $curr_name {
+//             $($curr_inner)*
+//         }
 //
-// 		impl $crate::util::overload_inner::Deref for $curr_name {
-// 			type Target = $next_name;
+//         impl $crate::util::overload_inner::Deref for $curr_name {
+//             type Target = $next_name;
 //
-// 			fn deref(&self) -> &Self::Target {
-// 				&$next_name
-// 			}
-// 		}
+//             fn deref(&self) -> &Self::Target {
+//                 &$next_name
+//             }
+//         }
 //
-// 		$crate::util::overload! {
-// 			$vis impl $next_name {
-// 				$($next_inner)*
-// 			}
+//         $crate::util::overload! {
+//             $vis impl $next_name {
+//                 $($next_inner)*
+//             }
 //
-// 			$($rest)*
-// 		}
+//             $($rest)*
+//         }
 //     };
 // }
 //
