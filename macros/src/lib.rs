@@ -135,13 +135,15 @@ fn make_group_builder(
                         // We are an embedding
                         Some(TokenTree::Punct(punct)) if punct.as_char() == '$' => {
                             // Consume the embedded group
-                            if let Some(TokenTree::Group(embedded)) = input_fork.next() {
+                            if let Some(TokenTree::Group(directive)) = input_fork.next() {
                                 // Build the main group extension
-                                let end_getter = token_pos_ctor(embedded.span_close(), 0, 1);
+                                let end_getter = token_pos_ctor(directive.span_close(), 0, 1);
+                                let crate_ = re_span(crate_.clone(), directive.span());
+                                let directive_inner = directive.stream();
 
-                                main_group.extend(quote! {
+                                main_group.extend(quote_spanned! { directive.span() =>
                                     .with_moved_cursor(#start_getter)
-                                    .with_token(#embedded)
+                                    .with_token(#crate_::TokenDirective::new(#directive_inner))
                                     .with_warped_cursor(#end_getter)
                                 });
 
@@ -152,20 +154,18 @@ fn make_group_builder(
                         }
 
                         // We are a group-formed directive
-                        Some(TokenTree::Group(directive))
+                        Some(TokenTree::Group(embedded))
                             if matches!(
-                                directive.delimiter(),
+                                embedded.delimiter(),
                                 Delimiter::Parenthesis | Delimiter::Brace | Delimiter::None,
                             ) =>
                         {
                             // Build the main group extension
-                            let end_getter = token_pos_ctor(directive.span_close(), 0, 1);
-                            let crate_ = re_span(crate_.clone(), directive.span());
-                            let directive_inner = directive.stream();
+                            let end_getter = token_pos_ctor(embedded.span_close(), 0, 1);
 
-                            main_group.extend(quote_spanned! { directive.span() =>
+                            main_group.extend(quote! {
                                 .with_moved_cursor(#start_getter)
-                                .with_token(#crate_::TokenDirective::new(#directive_inner))
+                                .with_token(#embedded)
                                 .with_warped_cursor(#end_getter)
                             });
 

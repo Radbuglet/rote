@@ -5,6 +5,7 @@
 - [x] Cursor-relative constructions break down if the origin line has expanded unexpectedly
 - [x] `Punct`s are not validated
 - [ ] `Punct` rules are not enforced during normalization
+- [ ] Make raw stream behavior more predictable (don't wrap everything in groups, for example)
 - [ ] Diagnostic spans for `rote!` are oftentimes incorrect
 - [ ] Comments are not yet supported
 - [ ] Identifiers should be equated through normalization

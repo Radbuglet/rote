@@ -68,24 +68,26 @@ pub fn vector(N: usize, CompTy: CompTy) -> Token {
     let ALPHA = ["x", "y", "z", "w"];
 
     rote! {
-        $${if CompTy.is_floating() {
+        ${if CompTy.is_floating() {
             rote! { #[derive(Debug, Copy, Clone, PartialEq, PartialOrd, Default)] }
         } else {
             rote! { #[derive(Debug, Copy, Clone, Hash, Eq, PartialEq, Ord, PartialOrd, Default)] }
         }}
         #[repr(C)]
-        pub struct $${&VecTy} {
-            $${(0..N)
-                .map(|i| rote! { pub $${TokenIdent::new(ALPHA[i])}: $${CompTy}, })
+        pub struct ${&VecTy} {
+            ${(0..N)
+                .map(|i| rote! { pub ${TokenIdent::new(ALPHA[i])}: ${CompTy}, })
                 .sep(TokenSpacing::NEWLINE)
                 .to_group(GroupMargin::AT_CURSOR)
             }
         }
 
-        impl $${&VecTy} {
-            $${(0..N)
+        impl ${&VecTy} {
+            ${
+                // Axis aligned constructors
+                (0..N)
                 .map(|i| rote! {
-                    pub const $${TokenIdent::new(ALPHA[i].to_uppercase())}: Self = Self::new($${
+                    pub const ${TokenIdent::new(ALPHA[i].to_uppercase())}: Self = Self::new(${
                         (0..N)
                             .map(|v| if i == v { CompTy.one() } else { CompTy.zero() })
                             .sep(rote! { , }.with_raw_space())
@@ -96,12 +98,12 @@ pub fn vector(N: usize, CompTy: CompTy) -> Token {
                 .to_group(GroupMargin::AT_CURSOR)
             }
 
-            pub const fn new($${(0..N)
-                .map(|i| rote! { pub $${TokenIdent::new(ALPHA[i])}: $${CompTy} })
+            pub const fn new(${(0..N)
+                .map(|i| rote! { pub ${TokenIdent::new(ALPHA[i])}: ${CompTy} })
                 .sep(rote! { , }.with_raw_space())
                 .to_group(GroupMargin::AT_CURSOR)
             }) -> Self {
-                Self { $${(0..N)
+                Self { ${(0..N)
                     .map(|i| TokenIdent::new(ALPHA[i]))
                     .sep(rote! { , }.with_raw_space())
                     .to_group(GroupMargin::AT_CURSOR)
@@ -109,5 +111,6 @@ pub fn vector(N: usize, CompTy: CompTy) -> Token {
             }
         }
     }
+    .to_normalized()
     .to_token()
 }

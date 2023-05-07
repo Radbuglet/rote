@@ -536,7 +536,7 @@ impl TokenGroup {
         self
     }
 
-    pub fn into_normalized(mut self) -> Self {
+    pub fn to_normalized(mut self) -> Self {
         self.normalize();
         self
     }
