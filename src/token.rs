@@ -285,6 +285,14 @@ impl TokenGroup {
         self
     }
 
+    pub fn with_raw_newline(self) -> Self {
+        self.with_raw(TokenSpacing::NEWLINE)
+    }
+
+    pub fn with_raw_space(self) -> Self {
+        self.with_raw(TokenSpacing::SPACE)
+    }
+
     // === Helpers === //
 
     fn tokens_mut_no_invalidate(&mut self) -> &mut Vec<Token> {
@@ -419,7 +427,6 @@ impl TokenGroup {
                 }
             }
             Token::Punct(punct) => {
-                // TODO: Enforce additional validation for `'` puncts.
                 tokens.push(punct.into());
             }
             Token::Literal(lit) => {
@@ -504,7 +511,14 @@ impl TokenGroup {
         self
     }
 
-    // TODO: Optimize
+    pub fn with_normalized_newline(self) -> Self {
+        self.with_normalized(TokenSpacing::NEWLINE)
+    }
+
+    pub fn with_normalized_space(self) -> Self {
+        self.with_normalized(TokenSpacing::SPACE)
+    }
+
     pub fn normalize(&mut self) -> &mut Self {
         if self.is_normalized {
             return self;
@@ -527,7 +541,6 @@ impl TokenGroup {
         self
     }
 
-    // TODO: Optimize
     pub fn clone_normalized(&self) -> Self {
         let mut cloned = self.clone();
         cloned.normalize();
@@ -605,8 +618,6 @@ impl TokenIdent {
 
         text
     }
-
-    // TODO: handle identifier normalization
 }
 
 // === TokenPunct === //
@@ -654,8 +665,6 @@ pub struct TokenLiteral {
 }
 
 impl TokenLiteral {
-    // TODO: Constructors
-
     pub fn from_quote(quoted: impl Into<Cow<'static, str>>) -> Self {
         let quoted = quoted.into();
         let decoded = DecodedTokenLiteral::parse(&quoted);
@@ -734,10 +743,6 @@ pub struct NumericLiteral {
     pub fractional: Option<u128>,
     pub exponent: Option<i128>,
     pub suffix: Option<NumberSuffix>,
-}
-
-impl NumericLiteral {
-    // TODO: Constructors
 }
 
 #[derive(Debug, Copy, Clone, Hash, Eq, PartialEq)]
@@ -935,7 +940,6 @@ mod literal_parser {
         // Try to parse a Unicode escape
         if is_non_byte {
             if p.expecting("u").try_match(|c| c.consume() == Some('u')) {
-                // TODO
                 return Err(ParseError::new_invalid(
                     p.cursor().span_one(),
                     "Unicode escapes are not yet supported!",
@@ -1558,8 +1562,6 @@ pub struct TokenSpacing {
 }
 
 impl TokenSpacing {
-    // TODO: Add back support for outdentation?
-
     pub const NEWLINE: Self = Self::new_lines(1);
     pub const SPACE: Self = Self::new_spaces(1);
 
@@ -1725,8 +1727,6 @@ impl Token {
 }
 
 impl TokenGroup {
-    // TODO: Merge this implementation with the group formatter's implementation to avoid character
-    //  counting inconsistencies.
     fn compute_line_margin_info(
         mut next_fragment: impl FnMut(&mut String) -> Option<&str>,
     ) -> (u32, u32) {
@@ -1848,7 +1848,6 @@ impl TokenPunct {
 
 impl TokenLiteral {
     fn display(&self, buffer: &mut String, _margin: u32) {
-        // FIXME: Multiline literals inherit spacing from the file, not the relative context.
         buffer.push_str(self.quoted());
     }
 }

@@ -174,9 +174,6 @@ fn make_group_builder(
                             break 'a;
                         }
 
-                        // We are a "path + arguments" directives
-                        // TODO: Implement
-
                         // We are just a regular `$`
                         _ => { /* fallthrough */ }
                     }

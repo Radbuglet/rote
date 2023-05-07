@@ -1,10 +1,11 @@
 use rote::{
     quote::{rote, TokenIterator},
-    token::{GroupMargin, Token, TokenIdent, TokenSpacing},
+    token::{GroupMargin, ToToken, Token, TokenIdent, TokenSpacing},
 };
 
 fn main() {
-    println!("===\n{}.", dbg!(vector(4, CompTy::F64)));
+    println!("Generating...");
+    println!("===\n{}.", vector(4, CompTy::F64));
 }
 
 #[derive(Debug, Copy, Clone, Hash, Eq, PartialEq)]
@@ -29,7 +30,27 @@ impl CompTy {
         matches!(self, Self::F32 | Self::F64)
     }
 
-    pub fn display(&self) -> Token {
+    pub fn one(&self) -> Token {
+        if self.is_floating() {
+            rote! { 1. }
+        } else {
+            rote! { 1 }
+        }
+        .to_token()
+    }
+
+    pub fn zero(&self) -> Token {
+        if self.is_floating() {
+            rote! { 0. }
+        } else {
+            rote! { 0 }
+        }
+        .to_token()
+    }
+}
+
+impl ToToken for CompTy {
+    fn to_token(self) -> Token {
         TokenIdent::new(match self {
             CompTy::I32 => "i32",
             CompTy::U32 => "u32",
@@ -55,21 +76,34 @@ pub fn vector(N: usize, CompTy: CompTy) -> Token {
         #[repr(C)]
         pub struct $${&VecTy} {
             $${(0..N)
-                .map(|i| rote! { pub $${TokenIdent::new(ALPHA[i])}: $${CompTy.display()}, })
+                .map(|i| rote! { pub $${TokenIdent::new(ALPHA[i])}: $${CompTy}, })
                 .sep(TokenSpacing::NEWLINE)
                 .to_group(GroupMargin::AT_CURSOR)
             }
         }
 
         impl $${&VecTy} {
+            $${(0..N)
+                .map(|i| rote! {
+                    pub const $${TokenIdent::new(ALPHA[i].to_uppercase())}: Self = Self::new($${
+                        (0..N)
+                            .map(|v| if i == v { CompTy.one() } else { CompTy.zero() })
+                            .sep(rote! { , }.with_raw_space())
+                            .to_group(GroupMargin::AT_CURSOR)
+                    });
+                })
+                .sep(TokenSpacing::NEWLINE)
+                .to_group(GroupMargin::AT_CURSOR)
+            }
+
             pub const fn new($${(0..N)
-                .map(|i| rote! { pub $${TokenIdent::new(ALPHA[i])}: $${CompTy.display()} })
-                .sep(rote! { , }.with_raw(TokenSpacing::SPACE))
+                .map(|i| rote! { pub $${TokenIdent::new(ALPHA[i])}: $${CompTy} })
+                .sep(rote! { , }.with_raw_space())
                 .to_group(GroupMargin::AT_CURSOR)
             }) -> Self {
                 Self { $${(0..N)
                     .map(|i| TokenIdent::new(ALPHA[i]))
-                    .sep(rote! { , }.with_raw(TokenSpacing::SPACE))
+                    .sep(rote! { , }.with_raw_space())
                     .to_group(GroupMargin::AT_CURSOR)
                 } }
             }

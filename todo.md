@@ -5,9 +5,13 @@
 - [x] Cursor-relative constructions break down if the origin line has expanded unexpectedly
 - [x] `Punct`s are not validated
 - [ ] `Punct` rules are not enforced during normalization
+- [ ] Diagnostic spans for `rote!` are oftentimes incorrect
+- [ ] Comments are not yet supported
+- [ ] Identifiers should be equated through normalization
 - [ ] Multiline strings break everything
 - [ ] Implementation of various format-adjacent systems isn't unified
 - [ ] Cow implementation is suboptimal
+- [ ] Normalization routine performance is suboptimal
 - [ ] We need unicode support in literals
 - [ ] We need support for comments
 - [ ] Quoted tab violations need to be warned against
